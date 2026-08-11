@@ -12,9 +12,6 @@ export class SimpleJwtLogin {
   private namespace = "/simple-jwt-login/v1";
   private authCodeKey = "AUTH_KEY";
 
-  private callback: any;
-  private sync = false;
-
   /**
    * @param host WordPress instance domain
    * @param namespace Simple-JWT-Login route namespace. Optional. Default to /simple-jwt-login/v1
@@ -30,10 +27,6 @@ export class SimpleJwtLogin {
     }
   }
 
-  public withCallback(callback: any) {
-    this.callback = callback;
-  }
-
   /**
    * @param params Request parameters
    * @param authCode AuthCode value. Optional
@@ -43,8 +36,7 @@ export class SimpleJwtLogin {
       params[this.authCodeKey] = authCode;
     }
 
-    window.location.href =
-      this.buildUrl() + "/autologin&" + this.queryData(params);
+    return this.buildUrl() + "/autologin&" + this.queryData(params);
   }
 
   /**
@@ -146,12 +138,14 @@ export class SimpleJwtLogin {
     return this.host + "/?rest_route=" + this.namespace;
   }
 
-  private queryData(data: any) {
-    const result = [];
-    for (const d in data)
-      result.push(encodeURIComponent(d) + "=" + encodeURIComponent(data[d]));
-
-    return result.join("&");
+  private queryData(data: Record<string, unknown>) {
+    const searchParams = new URLSearchParams();
+    for (const d in data) {
+      if (data[d] !== null && data[d] !== undefined) {
+        searchParams.append(d, String(data[d]));
+      }
+    }
+    return searchParams.toString();
   }
 
   /**
@@ -160,38 +154,34 @@ export class SimpleJwtLogin {
    * @param params Request parameters
    * @private
    */
-  private call(method: string, endpoint: string, params: any = null) {
-    const xhttp = new XMLHttpRequest();
-    xhttp.onreadystatechange = () => {
-      if (xhttp.readyState == 4) {
-        if (typeof this.callback === "function") {
-          if (xhttp.status === 200 || xhttp.status === 201) {
-            this.callback(JSON.parse(xhttp.responseText), xhttp.status);
-          } else {
-            this.callback(
-              { error: "true", response: xhttp.responseText },
-              xhttp.status
-            );
-          }
-        } else {
-          this.sync = true;
-        }
-      }
+  private async call<T = unknown, P extends Record<string, unknown> = Record<string, unknown>>(
+    method: string,
+    endpoint: string,
+    params: P | null = null
+  ): Promise<T> {
+    let callUrl = this.buildUrl() + endpoint;
+    const fetchOptions: RequestInit = {
+      method,
+      headers: {
+        "Content-Type": "application/json;charset=UTF-8",
+      },
     };
 
-    let callUrl = this.buildUrl() + endpoint;
-    if (method === "GET") {
-      callUrl = callUrl + "&" + this.queryData(params);
-      params = null;
+    if (method === "GET" && params) {
+      callUrl = callUrl + "&" + this.queryData(params as Record<string, unknown>);
+    } else if (params) {
+      fetchOptions.body = JSON.stringify(params);
     }
 
-    xhttp.open(method, callUrl, this.sync);
-    xhttp.setRequestHeader("Content-type", "application/json;charset=UTF-8");
-    const dataToSend = params !== null ? JSON.stringify(params) : null;
-    xhttp.send(dataToSend);
+    const response = await fetch(callUrl, fetchOptions);
 
-    if (this.sync) {
-      return xhttp.responseText;
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP Error: ${response.status} - ${errorText}`);
     }
+
+    // Some API responses might be empty
+    const text = await response.text();
+    return (text ? JSON.parse(text) : {}) as T;
   }
 }
