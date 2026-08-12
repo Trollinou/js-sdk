@@ -1,14 +1,15 @@
 {
   "name": "simple-jwt-login",
   "version": "1.0.0",
+  "type": "module",
   "description": "Simple-JWT-Login JavaScript SDK — compatible with plugin v4.x, with silent token refresh",
   "main": "dist/index.js",
   "scripts": {
     "test": "jest",
     "build": "tsc",
     "publish": "npm publish",
-    "lint": "eslint . --ext .ts",
-    "lint-and-fix": "eslint . --ext .ts --fix",
+    "lint": "eslint .",
+    "lint-and-fix": "eslint . --fix",
     "prettier:check": "prettier --check .",
     "prettier:format": "prettier --write ."
   },
@@ -28,5 +29,9 @@
     "prettier": "3.9.6",
     "ts-jest": "^29.4.12",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "eslint-config-prettier": "^10.1.8",
+    "typescript-eslint": "^8.67.0"
   }
 }
