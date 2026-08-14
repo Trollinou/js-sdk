@@ -33,5 +33,9 @@
   "dependencies": {
     "eslint-config-prettier": "^10.1.8",
     "typescript-eslint": "^8.67.0"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true,
+    "unrs-resolver@1.12.2": true
   }
 }
