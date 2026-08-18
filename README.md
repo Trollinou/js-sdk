@@ -464,7 +464,7 @@ const { jwt, refresh_token } = response.data;
 
 ## Changelog
 
-### v1.1.0 (Unreleased)
+### v1.1.0
 - **New**: `CookieTokenStorage` for HTTP-only cookie-based token persistence with configurable options
 - **New**: `CookieOptions` interface for cookie configuration (secure, httpOnly, sameSite, maxAgeDays, path, domain)
 - **New**: `SimpleJwtLoginApiError` class for typed error handling with plugin-compatible format

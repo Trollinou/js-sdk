@@ -1,6 +1,6 @@
 {
   "name": "simple-jwt-login",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Simple-JWT-Login JavaScript SDK — compatible with plugin v4.x, with silent token refresh",
   "main": "dist/index.js",
