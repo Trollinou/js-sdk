@@ -10,7 +10,21 @@ import { ValidateTokenInterface } from "./Requests/ValidateTokenInterface";
 import { AuthenticateResponse } from "./Responses/AuthenticateResponse";
 import { RegisterUserResponse } from "./Responses/RegisterUserResponse";
 import { ValidateTokenResponse } from "./Responses/ValidateTokenResponse";
+import { SimpleJwtLoginApiError } from "./Responses/SimpleJwtLoginError";
 import { InMemoryTokenStorage, TokenStorage } from "./TokenStorage";
+
+/**
+ * Polyfill for atob (base64 decode) for environments where it's not available.
+ * Works in browsers (native atob) and Node.js (Buffer fallback).
+ */
+function atobPolyfill(input: string): string {
+  if (typeof atob !== "undefined") {
+    return atob(input);
+  }
+  // Node.js fallback using Buffer (available in Node.js environments)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (Buffer as any).from(input, "base64").toString("binary");
+}
 
 /** Configuration options for SimpleJwtLogin */
 export interface SimpleJwtLoginOptions {
@@ -170,18 +184,36 @@ export class SimpleJwtLogin {
    * Refresh the JWT using a refresh token.
    * Tokens are automatically stored after a successful refresh.
    *
-   * @param params Must contain a `JWT` field (the current JWT to refresh)
+   * @param params Must contain a `refresh_token` field (as per plugin v4 API).
+   *              Falls back to `JWT` for backward compatibility.
    * @param authCode Optional auth code
    */
   public async refreshToken(
     params: RefreshTokenInterface,
     authCode = "",
   ): Promise<AuthenticateResponse> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    // Build request body - prioritize refresh_token (plugin v4 API)
+    const body: Record<string, string> = {};
+    
+    // Prefer refresh_token as per plugin v4 API specification
+    if (params.refresh_token) {
+      body.refresh_token = params.refresh_token;
+    } else if (params.JWT) {
+      // Fallback to JWT for backward compatibility
+      body.JWT = params.JWT;
+    } else {
+      // If no token provided in params, use the stored refresh token
+      const storedRefreshToken = this.storage.getRefreshToken();
+      if (storedRefreshToken) {
+        body.refresh_token = storedRefreshToken;
+      }
     }
 
-    const response = await this.call<AuthenticateResponse>("POST", "/auth/refresh", params);
+    if (authCode !== "") {
+      body[this.authCodeKey] = authCode;
+    }
+
+    const response = await this.call<AuthenticateResponse>("POST", "/auth/refresh", body);
 
     // Auto-store refreshed tokens
     if (response.data?.jwt) {
@@ -338,13 +370,14 @@ export class SimpleJwtLogin {
 
   /**
    * Decode the JWT payload and check if it expires within `refreshBeforeExpirySeconds`.
+   * Works in both browser and Node.js environments.
    */
   private isJwtExpiringSoon(jwt: string): boolean {
     try {
       const parts = jwt.split(".");
       if (parts.length !== 3) return false;
-      // atob is available in browsers and in Node.js 16+ / ES2021 environments
-      const payload = JSON.parse(atob(parts[1])) as { exp?: number };
+      // Use polyfill for Node.js compatibility
+      const payload = JSON.parse(atobPolyfill(parts[1])) as { exp?: number };
       if (typeof payload.exp !== "number") return false;
       return Date.now() / 1000 >= payload.exp - this.refreshBeforeExpirySeconds;
     } catch {
@@ -394,7 +427,40 @@ export class SimpleJwtLogin {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`HTTP Error: ${response.status} - ${errorText}`);
+      let errorCode: number | undefined;
+      let errorMessage: string;
+      let responseData: unknown = null;
+      
+      try {
+        const parsed = JSON.parse(errorText);
+        responseData = parsed;
+        
+        // Extract error_code from plugin response (can be at root or in data)
+        if (typeof parsed.error_code === 'number') {
+          errorCode = parsed.error_code;
+        } else if (parsed.data?.error_code && typeof parsed.data.error_code === 'number') {
+          errorCode = parsed.data.error_code;
+        }
+        
+        // Extract message (can be at root or in data)
+        if (parsed.message) {
+          errorMessage = parsed.message;
+        } else if (parsed.data?.message) {
+          errorMessage = parsed.data.message;
+        } else {
+          errorMessage = errorText;
+        }
+      } catch {
+        // Not JSON, use raw text
+        errorMessage = errorText;
+      }
+
+      throw new SimpleJwtLoginApiError(
+        response.status,
+        errorCode,
+        errorMessage,
+        responseData,
+      );
     }
 
     const text = await response.text();
