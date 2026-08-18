@@ -1,13 +1,24 @@
 import { AuthenticateInterface } from "../src/Requests/AuthenticateInterface";
 import { SimpleJwtLogin } from "../src/simplejwtlogin";
-import { InMemoryTokenStorage, LocalStorageTokenStorage } from "../src/TokenStorage";
+import { InMemoryTokenStorage, LocalStorageTokenStorage, CookieTokenStorage } from "../src/TokenStorage";
+import { SimpleJwtLoginApiError, ERROR_CODES } from "../src/Responses/SimpleJwtLoginError";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Polyfill for btoa (base64 encode) for Node.js environments */
+function btoaPolyfill(input: string): string {
+  if (typeof btoa !== "undefined") {
+    return btoa(input);
+  }
+  // Node.js fallback using Buffer (available in Node.js environments)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (Buffer as any).from(input, "binary").toString("base64");
+}
 
 /** Build a JWT with a given expiry (seconds from now). exp=0 means already expired. */
 function buildJwt(expInSeconds: number): string {
   const payload = { exp: Math.floor(Date.now() / 1000) + expInSeconds, sub: "1" };
-  const encoded = btoa(JSON.stringify(payload));
+  const encoded = btoaPolyfill(JSON.stringify(payload));
   return `header.${encoded}.signature`;
 }
 
@@ -208,7 +219,83 @@ describe("SimpleJwtLogin", () => {
 
       await expect(
         sdk.authenticate({ login: "wrong", password: "bad" }),
-      ).rejects.toThrow("HTTP Error: 401 - Unauthorized");
+      ).rejects.toThrow(SimpleJwtLoginApiError);
+    });
+
+    it("should handle HTTP errors with error code", async () => {
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({ success: false, error_code: 48, data: { message: "Invalid credentials" } })
+        ),
+      });
+
+      try {
+        await sdk.authenticate({ login: "wrong", password: "bad" });
+        fail("Should have thrown an error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SimpleJwtLoginApiError);
+        expect((error as SimpleJwtLoginApiError).status).toBe(401);
+        expect((error as SimpleJwtLoginApiError).errorCode).toBe(48);
+        expect((error as SimpleJwtLoginApiError).message).toBe("Invalid credentials");
+        expect((error as SimpleJwtLoginApiError).toPluginFormat()).toEqual({
+          success: false,
+          error_code: 48,
+          errorCode: 48,
+          data: { message: "Invalid credentials" },
+        });
+      }
+    });
+
+    it("should expose ERROR_CODES constants", () => {
+      expect(ERROR_CODES.INVALID_CREDENTIALS).toBe(48);
+      expect(ERROR_CODES.AUTH_CODE_INVALID).toBe(27);
+      expect(ERROR_CODES.JWT_EXPIRED).toBe(12);
+      expect(ERROR_CODES.REFRESH_TOKEN_NOT_FOUND).toBe(51);
+    });
+
+    it("should use refresh_token parameter as per plugin v4 API", async () => {
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({ success: true, data: { jwt: "new-jwt", refresh_token: "new-refresh" } })
+        ),
+      });
+
+      const result = await sdk.refreshToken({ refresh_token: "my-refresh-token" });
+
+      expect(result.data.jwt).toBe("new-jwt");
+      expect(result.data.refresh_token).toBe("new-refresh");
+      // Verify the request body contains refresh_token (plugin v4 API format)
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/auth/refresh",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ refresh_token: "my-refresh-token" }),
+        })
+      );
+    });
+
+    it("should fall back to JWT parameter for backward compatibility", async () => {
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({ success: true, data: { jwt: "new-jwt" } })
+        ),
+      });
+
+      const result = await sdk.refreshToken({ JWT: "my-jwt-token" });
+
+      expect(result.data.jwt).toBe("new-jwt");
+      // Verify the request body contains JWT (backward compatibility)
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/auth/refresh",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ JWT: "my-jwt-token" }),
+        })
+      );
     });
   });
 
@@ -278,6 +365,94 @@ describe("SimpleJwtLogin", () => {
       expect(storage.getRefreshToken()).toBe("refresh-value");
       storage.clearTokens();
       expect(storage.getJwt()).toBeNull();
+    });
+  });
+
+  // ── CookieTokenStorage ────────────────────────────────────────────────────────
+
+  describe("CookieTokenStorage", () => {
+    let cookieStore: Record<string, string>;
+
+    beforeEach(() => {
+      // Mock document.cookie using a simple store
+      cookieStore = {};
+      
+      // Helper to get cookie string
+      const getCookieString = () => {
+        return Object.entries(cookieStore)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("; ");
+      };
+
+      // Helper to set cookie from string
+      const setCookieFromString = (cookieString: string) => {
+        if (cookieString === "") {
+          cookieStore = {};
+          return;
+        }
+        // Simple parsing - just handle the first key=value pair
+        // (full cookie parsing is complex, this is enough for testing)
+        const firstSemicolon = cookieString.indexOf(";");
+        const cookiePart = firstSemicolon === -1 ? cookieString : cookieString.substring(0, firstSemicolon);
+        const equalsIndex = cookiePart.indexOf("=");
+        if (equalsIndex !== -1) {
+          const key = cookiePart.substring(0, equalsIndex).trim();
+          const value = cookiePart.substring(equalsIndex + 1).trim();
+          cookieStore[key] = value;
+        }
+      };
+
+      globalThis.document = {
+        get cookie(): string {
+          return getCookieString();
+        },
+        set cookie(value: string) {
+          setCookieFromString(value);
+        },
+      } as unknown as Document;
+    });
+
+    afterEach(() => {
+      // Clean up: remove document from globalThis
+      // @ts-expect-error - Deleting global property for test cleanup
+      delete globalThis.document;
+    });
+
+    it("should store and retrieve tokens in cookies", () => {
+      const storage = new CookieTokenStorage("myapp");
+      storage.setJwt("jwt-value");
+      storage.setRefreshToken("refresh-value");
+      expect(storage.getJwt()).toBe("jwt-value");
+      expect(storage.getRefreshToken()).toBe("refresh-value");
+    });
+
+    it("should clear tokens from cookies", () => {
+      const storage = new CookieTokenStorage("myapp");
+      storage.setJwt("jwt-value");
+      storage.setRefreshToken("refresh-value");
+      storage.clearTokens();
+      expect(storage.getJwt()).toBeNull();
+      expect(storage.getRefreshToken()).toBeNull();
+    });
+
+    it("should use custom prefix for cookie names", () => {
+      const storage = new CookieTokenStorage("custom");
+      storage.setJwt("test-jwt");
+      // The cookie should be set
+      expect(cookieStore).toHaveProperty("custom_jwt");
+      expect(cookieStore["custom_jwt"]).toBe("test-jwt");
+    });
+
+    it("should return null in SSR environment without document", () => {
+      const originalDocument = globalThis.document;
+      // @ts-expect-error - We're deleting document for testing
+      delete globalThis.document;
+
+      const storage = new CookieTokenStorage("myapp");
+      storage.setJwt("jwt-value");
+      expect(storage.getJwt()).toBeNull();
+
+      globalThis.document = originalDocument;
     });
   });
 });
