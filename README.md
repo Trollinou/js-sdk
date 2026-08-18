@@ -96,6 +96,38 @@ const sdk = new SimpleJwtLogin("https://your-wordpress.com", {
 
 ---
 
+## Server-Side Rendering (SSR) & Node.js Support
+
+The SDK is fully compatible with **Server-Side Rendering** frameworks like Next.js, Nuxt, and Node.js environments:
+
+### Automatic Environment Detection
+
+All token storage implementations automatically detect their environment:
+
+- **`LocalStorageTokenStorage`**: Returns `null` for all operations if `localStorage` is not available (SSR)
+- **`CookieTokenStorage`**: Returns `null` for all operations if `document` is not available (SSR)
+- **`InMemoryTokenStorage`**: Works in all environments (recommended for SSR)
+
+### Base64 Polyfills
+
+The SDK includes polyfills for `atob` and `btoa` functions, ensuring compatibility with:
+- Modern browsers (native support)
+- Node.js 16+ (native support)
+- Node.js < 16 (Buffer fallback)
+
+This means JWT decoding (for expiry checking) works seamlessly in all environments.
+
+### Recommended Usage
+
+| Environment | Recommended Storage | Reason |
+|-------------|---------------------|--------|
+| **PWA / Client-side SPA** | `LocalStorageTokenStorage` | Tokens persist across page reloads |
+| **SSR / Next.js / Nuxt** | `InMemoryTokenStorage` or `CookieTokenStorage` | No `localStorage` in SSR |
+| **Traditional Web App** | `CookieTokenStorage` | HTTP-only cookies for security |
+| **Node.js Scripts** | `InMemoryTokenStorage` | No browser APIs available |
+
+---
+
 ## Token Management
 
 ### Token Storage
@@ -146,6 +178,27 @@ const sdk = new SimpleJwtLogin("https://your-wordpress.com", {
 });
 ```
 
+#### `CookieTokenStorage`
+
+Cookie-based storage for traditional web applications that require HTTP-only cookies:
+
+```typescript
+import { SimpleJwtLogin, CookieTokenStorage } from "simple-jwt-login";
+
+const sdk = new SimpleJwtLogin("https://your-wordpress.com", {
+  tokenStorage: new CookieTokenStorage("my-app", {
+    secure: true,        // HTTPS only (recommended for production)
+    httpOnly: false,     // Allow JavaScript access (set to true for HTTP-only)
+    sameSite: "Lax",     // CSRF protection: "Lax", "Strict", or "None"
+    maxAgeDays: 7,       // Cookie expiry in days
+    path: "/",           // Cookie path (default: "/")
+    domain: "example.com" // Cookie domain (optional)
+  }),
+});
+```
+
+> **Note:** In SSR/Node.js environments where `document` is not available, all cookie operations will safely return `null` or no-op.
+
 ### Silent Refresh
 
 After authentication, the SDK automatically manages token renewal:
@@ -173,6 +226,61 @@ sdk.getJwt();                       // current JWT (may be expired)
 await sdk.getValidJwt();            // fresh JWT (auto-refresh if needed)
 sdk.clearTokens();                  // logout
 ```
+
+### Error Handling
+
+All API errors are thrown as `SimpleJwtLoginApiError` instances with full type information and plugin-compatible format:
+
+```typescript
+import { SimpleJwtLogin, SimpleJwtLoginApiError, ERROR_CODES } from "simple-jwt-login";
+
+try {
+  await sdk.authenticate({ login: "user@example.com", password: "wrong" });
+} catch (error) {
+  if (error instanceof SimpleJwtLoginApiError) {
+    // Typed error with plugin-compatible information
+    console.log(error.status);       // HTTP status code (401, 403, 422, etc.)
+    console.log(error.errorCode);   // Plugin-specific error code (48, 27, 55, etc.)
+    console.log(error.message);      // Human-readable error message
+    
+    // Check against known error codes
+    if (error.isErrorCode(ERROR_CODES.INVALID_CREDENTIALS)) {
+      // Handle invalid credentials (error_code: 48)
+      console.log("Please check your email and password");
+    } else if (error.isErrorCode(ERROR_CODES.JWT_EXPIRED)) {
+      // Handle expired JWT (error_code: 12)
+      console.log("Your session has expired, please log in again");
+    } else if (error.isErrorCode(ERROR_CODES.AUTH_CODE_INVALID)) {
+      // Handle invalid auth code (error_code: 27)
+      console.log("Invalid authentication code");
+    }
+    
+    // Convert to plugin's standard error format
+    const pluginError = error.toPluginFormat();
+    // Result: { success: false, error_code: 48, data: { message: "Invalid credentials" } }
+    
+    // Send error to your logging service
+    console.error(pluginError);
+  }
+}
+```
+
+**Available error codes (from `ERROR_CODES`):**
+
+| Code | Constant | Description |
+|------|---------|-------------|
+| 48 | `INVALID_CREDENTIALS` | Email/username or password is incorrect |
+| 27 | `AUTH_CODE_INVALID` | The provided auth code is wrong |
+| 12 | `JWT_EXPIRED` | JWT has expired |
+| 11 | `JWT_SIGNATURE_INVALID` | JWT signature verification failed |
+| 55 | `JWT_REVOKED` | JWT has been revoked |
+| 51 | `REFRESH_TOKEN_NOT_FOUND` | Refresh token not found/expired |
+| 45 | `AUTH_DISABLED` | Authentication is disabled in plugin settings |
+| 41 | `IP_NOT_ALLOWED` | Client IP not on allow-list |
+| 53 | `JWT_MISSING` | JWT is missing from request |
+| 81 | `REFRESH_TOKEN_DISABLED` | Refresh token feature is disabled |
+| 82 | `VALIDATION_DISABLED` | JWT validation is disabled |
+| 83 | `REVOCATION_DISABLED` | Token revocation is disabled |
 
 ---
 
@@ -296,11 +404,26 @@ All response types are exported for use in your TypeScript code:
 
 ```typescript
 import type {
-  AuthenticateResponse,    // POST /auth
-  RegisterUserResponse,    // POST /users
-  ValidateTokenResponse,   // GET  /auth/validate
-  SimpleJwtLoginErrorResponse, // Error shape
+  AuthenticateResponse,        // POST /auth
+  RegisterUserResponse,        // POST /users
+  ValidateTokenResponse,       // GET  /auth/validate
+  SimpleJwtLoginErrorResponse, // Error shape (plugin format)
 } from "simple-jwt-login";
+```
+
+### Error Types
+
+For enhanced error handling:
+
+```typescript
+import type {
+  SimpleJwtLoginApiError,    // Typed error class
+  SimpleJwtLoginErrorCode,   // Error code type
+} from "simple-jwt-login";
+
+// Access all known error codes
+import { ERROR_CODES } from "simple-jwt-login";
+// ERROR_CODES.INVALID_CREDENTIALS, ERROR_CODES.JWT_EXPIRED, etc.
 ```
 
 ---
@@ -340,6 +463,19 @@ const { jwt, refresh_token } = response.data;
 ---
 
 ## Changelog
+
+### v1.1.0 (Unreleased)
+- **New**: `CookieTokenStorage` for HTTP-only cookie-based token persistence with configurable options
+- **New**: `CookieOptions` interface for cookie configuration (secure, httpOnly, sameSite, maxAgeDays, path, domain)
+- **New**: `SimpleJwtLoginApiError` class for typed error handling with plugin-compatible format
+- **New**: `ERROR_CODES` constants object with all WordPress plugin v4 error codes
+- **New**: Base64 polyfills (`atob`/`btoa`) for Node.js < 16 compatibility
+- **Fix**: `RefreshTokenInterface` now uses `refresh_token` as primary parameter (per [plugin v4 API](https://simplejwtlogin.com/api/v4/refresh-jwt)) with backward-compatible `JWT` fallback
+- **Fix**: `LocalStorageTokenStorage` safely handles SSR/Node.js environments (returns null when unavailable)
+- **Fix**: JWT expiry checking now works in Node.js environments via polyfill
+- **Fix**: Added `@types/node` to TypeScript configuration for Buffer type support
+- **New**: 16 additional unit tests for error handling and cookie storage (total: 50 tests)
+- **Compatibility**: Full compliance with Simple-JWT-Login WordPress plugin v4.x
 
 ### v1.0.0
 - **Breaking change**: constructor now accepts an options object instead of positional arguments
