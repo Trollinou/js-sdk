@@ -4,7 +4,7 @@
 <p align="center">
    <img src="https://img.shields.io/npm/dt/simple-jwt-login" alt="npm downloads" />
    <img src="https://img.shields.io/badge/plugin-v4.x-blue" alt="Plugin compatibility" />
-   <img src="https://img.shields.io/badge/version-1.0.0-green" alt="SDK version" />
+   <img src="https://img.shields.io/badge/version-1.1.1-green" alt="SDK version" />
 </p>
 
 # Simple-JWT-Login SDK
@@ -463,6 +463,11 @@ const { jwt, refresh_token } = response.data;
 ---
 
 ## Changelog
+
+### v1.1.1
+- **Fix**: ESM compatibility (`ReferenceError: exports is not defined in ES module scope`) for Vite/Vitest/ESM bundlers
+- **Fix**: Added `types`, `module`, and `exports` map in `package.json`
+- **Config**: Compiles with `"module": "ES2022"` and `"target": "es2021"` in `tsconfig.json`
 
 ### v1.1.0
 - **New**: `CookieTokenStorage` for HTTP-only cookie-based token persistence with configurable options

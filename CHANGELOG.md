@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-08-24
+
+### Fixed
+
+- **ESM Compatibility**: Fixed `ReferenceError: exports is not defined in ES module scope` when imported in ESM / Vite / Vitest environments
+  - Updated `tsconfig.json` to compile modules with `"module": "ES2022"` and `"moduleResolution": "bundler"` while maintaining `"target": "es2021"`
+  - Added `types`, `module`, and `exports` map to `package.json`
+  - Updated Jest config to ignore `dist/` directory
+
+---
+
 ## [1.1.0] - 2025-08-18
 
 ### Added
