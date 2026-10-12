@@ -14,10 +14,15 @@
     },
     "./package.json": "./package.json"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "test": "jest",
+    "test:coverage": "jest --coverage",
     "build": "tsc",
     "publish": "npm publish",
+    "prepublishOnly": "npm run lint && npm test && npm run build",
     "lint": "eslint .",
     "lint-and-fix": "eslint . --fix",
     "prettier:check": "prettier --check .",
@@ -36,13 +41,11 @@
     "@typescript-eslint/eslint-plugin": "^8.70.0",
     "@typescript-eslint/parser": "^8.70.0",
     "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.8",
     "jest": "^30.5.2",
     "prettier": "3.9.8",
     "ts-jest": "^29.4.12",
-    "typescript": "^6.0.3"
-  },
-  "dependencies": {
-    "eslint-config-prettier": "^10.1.8",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0"
   },
   "allowScripts": {

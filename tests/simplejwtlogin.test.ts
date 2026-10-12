@@ -95,6 +95,50 @@ describe("SimpleJwtLogin", () => {
       const result = await sdk.getValidJwt();
       expect(result).toBe(freshJwt);
       expect(sdk.getJwt()).toBe(freshJwt);
+      // Ensure refresh_token is prioritized over JWT in request body
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/auth/refresh"),
+        expect.objectContaining({
+          body: JSON.stringify({ refresh_token: "my-refresh-token" }),
+        }),
+      );
+    });
+
+    it("getValidJwt uses JWT fallback when no refresh token is stored", async () => {
+      const expiredJwt = buildJwt(10);
+      const freshJwt = "fresh-jwt-token";
+
+      sdk.setTokens(expiredJwt); // No refresh token
+
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({ success: true, data: { jwt: freshJwt } }),
+        ),
+      });
+
+      const result = await sdk.getValidJwt();
+      expect(result).toBe(freshJwt);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/auth/refresh"),
+        expect.objectContaining({
+          body: JSON.stringify({ JWT: expiredJwt }),
+        }),
+      );
+    });
+
+    it("handles JWT with base64url characters (- and _) correctly", async () => {
+      // Create a payload that produces '+' and '/' in base64, replaced with '-' and '_'
+      const exp = Math.floor(Date.now() / 1000) + 3600;
+      // Payload designed to trigger base64 characters
+      const json = JSON.stringify({ exp, sub: "user-123", test: "???>>><<<" });
+      const b64 = Buffer.from(json).toString("base64");
+      const b64url = b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const b64urlJwt = `header.${b64url}.signature`;
+
+      sdk.setTokens(b64urlJwt);
+      const result = await sdk.getValidJwt();
+      expect(result).toBe(b64urlJwt);
     });
 
     it("getValidJwt clears tokens and returns null when refresh fails", async () => {
@@ -441,6 +485,16 @@ describe("SimpleJwtLogin", () => {
       // The cookie should be set
       expect(cookieStore).toHaveProperty("custom_jwt");
       expect(cookieStore["custom_jwt"]).toBe("test-jwt");
+    });
+
+    it("should correctly encode and decode cookies with special characters", () => {
+      const storage = new CookieTokenStorage("myapp");
+      const specialJwt = "header.payload.signature?val=1&foo=bar;baz,qux";
+      const specialRefresh = "refresh=token;special/value";
+      storage.setJwt(specialJwt);
+      storage.setRefreshToken(specialRefresh);
+      expect(storage.getJwt()).toBe(specialJwt);
+      expect(storage.getRefreshToken()).toBe(specialRefresh);
     });
 
     it("should return null in SSR environment without document", () => {
