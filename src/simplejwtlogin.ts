@@ -26,6 +26,17 @@ function atobPolyfill(input: string): string {
   return (Buffer as any).from(input, "base64").toString("binary");
 }
 
+/**
+ * Decode base64url encoded string (handles URL-safe characters and padding).
+ */
+function decodeBase64Url(input: string): string {
+  let base64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4 !== 0) {
+    base64 += "=";
+  }
+  return atobPolyfill(base64);
+}
+
 /** Configuration options for SimpleJwtLogin */
 export interface SimpleJwtLoginOptions {
   /**
@@ -350,9 +361,11 @@ export class SimpleJwtLogin {
     }
 
     this.isRefreshing = true;
-    this.refreshPromise = this.refreshToken({
-      JWT: currentJwt ?? "",
-    })
+    this.refreshPromise = this.refreshToken(
+      refreshToken
+        ? { refresh_token: refreshToken }
+        : { JWT: currentJwt ?? "" },
+    )
       .then((response) => {
         this.isRefreshing = false;
         this.refreshPromise = null;
@@ -376,8 +389,8 @@ export class SimpleJwtLogin {
     try {
       const parts = jwt.split(".");
       if (parts.length !== 3) return false;
-      // Use polyfill for Node.js compatibility
-      const payload = JSON.parse(atobPolyfill(parts[1])) as { exp?: number };
+      // Use base64url decoder for JWT payload compatibility
+      const payload = JSON.parse(decodeBase64Url(parts[1])) as { exp?: number };
       if (typeof payload.exp !== "number") return false;
       return Date.now() / 1000 >= payload.exp - this.refreshBeforeExpirySeconds;
     } catch {

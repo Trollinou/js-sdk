@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Packaging**: Added `"files": ["dist"]` in `package.json` to strictly whitelist published artifacts
+- **Scripts**: Added `test:coverage` and `prepublishOnly` lifecycle hook scripts
+- **Tests**: Added tests for silent refresh token prioritization, base64url JWT decoding, and cookie URL encoding
+
+### Changed
+
+- **Dependencies**: Moved `eslint-config-prettier` and `typescript-eslint` from `dependencies` to `devDependencies`
+- **Build**: Excluded `tests/` from TypeScript compilation in `tsconfig.json` to prevent shipping tests in the distribution bundle
+
+### Fixed
+
+- **Silent Refresh**: `silentRefresh()` now correctly prioritizes the stored `refresh_token` over sending the expiring `JWT`
+- **JWT Expiry**: Fixed `isJwtExpiringSoon` for JWT payloads using standard `base64url` characters (`-`, `_`) and unpadded payloads
+- **CookieTokenStorage**: Added URI encoding and decoding (`encodeURIComponent` / `decodeURIComponent`) for cookies with special characters
+
+### Deprecated
+
+- **CookieOptions.httpOnly**: Deprecated `httpOnly` option as client-side `document.cookie` cannot set HTTP-only cookies in browsers
+
+---
+
 ## [1.1.1] - 2026-08-24
 
 ### Fixed

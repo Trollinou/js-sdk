@@ -183,10 +183,14 @@ export class CookieTokenStorage implements TokenStorage {
       return null;
     }
     try {
-      const value = `; ${document.cookie}`;
-      const parts = value.split(`; ${name}=`);
-      if (parts.length === 2) {
-        return parts.pop()?.split(";").shift() || null;
+      const cookies = document.cookie ? document.cookie.split("; ") : [];
+      const encodedName = encodeURIComponent(name);
+      for (const cookie of cookies) {
+        const [k, ...v] = cookie.split("=");
+        if (k === encodedName || k === name) {
+          const val = decodeURIComponent(v.join("="));
+          return val || null;
+        }
       }
       return null;
     } catch {
@@ -203,15 +207,14 @@ export class CookieTokenStorage implements TokenStorage {
     }
     try {
       const expiryDate = new Date();
-      expiryDate.setTime(expiryDate.getTime() + (days * 24 * 60 * 60 * 1000));
+      expiryDate.setTime(expiryDate.getTime() + days * 24 * 60 * 60 * 1000);
       const expires = `expires=${expiryDate.toUTCString()}`;
       const path = `path=${this.options.path || "/"}`;
       const sameSite = `SameSite=${this.options.sameSite || "Lax"}`;
       const secure = this.options.secure ? "; Secure" : "";
-      const httpOnly = this.options.httpOnly ? "; HttpOnly" : "";
       const domain = this.options.domain ? `; domain=${this.options.domain}` : "";
-      
-      document.cookie = `${name}=${value}; ${expires}; ${path}; ${sameSite}${secure}${httpOnly}${domain}`;
+
+      document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; ${expires}; ${path}; ${sameSite}${secure}${domain}`;
     } catch {
       // Silently fail if document.cookie is not accessible
     }
@@ -227,7 +230,7 @@ export class CookieTokenStorage implements TokenStorage {
     try {
       const path = this.options.path ? `; path=${this.options.path}` : "; path=/";
       const domain = this.options.domain ? `; domain=${this.options.domain}` : "";
-      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC${path}${domain}`;
+      document.cookie = `${encodeURIComponent(name)}=; expires=Thu, 01 Jan 1970 00:00:00 UTC${path}${domain}`;
     } catch {
       // Silently fail if document.cookie is not accessible
     }
@@ -269,6 +272,9 @@ export interface CookieOptions {
   sameSite?: "Lax" | "Strict" | "None";
   /** Secure flag (default: false) - requires HTTPS */
   secure?: boolean;
-  /** HttpOnly flag (default: false) - prevents JavaScript access */
+  /**
+   * @deprecated HttpOnly cannot be set via client-side document.cookie.
+   * Browsers ignore HttpOnly directives when setting cookies through JavaScript.
+   */
   httpOnly?: boolean;
 }
