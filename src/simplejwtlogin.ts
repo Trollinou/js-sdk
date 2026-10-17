@@ -1,17 +1,17 @@
-import { AuthenticateInterface } from "./Requests/AuthenticateInterface";
-import { AutologinInterface } from "./Requests/AutologinInterface";
-import { ChangePasswordInterface } from "./Requests/ChangePasswordInterface";
-import { DeleteUserInterface } from "./Requests/DeleteUserInterface";
-import { RefreshTokenInterface } from "./Requests/RefreshTokenInterface";
-import { RegisterUserInterface } from "./Requests/RegisterUserInterface";
-import { ResetPasswordInterface } from "./Requests/ResetPasswordInterface";
-import { RevokeTokenInterface } from "./Requests/RevokeTokenInterface";
-import { ValidateTokenInterface } from "./Requests/ValidateTokenInterface";
-import { AuthenticateResponse } from "./Responses/AuthenticateResponse";
-import { RegisterUserResponse } from "./Responses/RegisterUserResponse";
-import { ValidateTokenResponse } from "./Responses/ValidateTokenResponse";
-import { SimpleJwtLoginApiError } from "./Responses/SimpleJwtLoginError";
-import { InMemoryTokenStorage, TokenStorage } from "./TokenStorage";
+import type { AuthenticateInterface } from "./Requests/AuthenticateInterface.js";
+import type { AutologinInterface } from "./Requests/AutologinInterface.js";
+import type { ChangePasswordInterface } from "./Requests/ChangePasswordInterface.js";
+import type { DeleteUserInterface } from "./Requests/DeleteUserInterface.js";
+import type { RefreshTokenInterface } from "./Requests/RefreshTokenInterface.js";
+import type { RegisterUserInterface } from "./Requests/RegisterUserInterface.js";
+import type { ResetPasswordInterface } from "./Requests/ResetPasswordInterface.js";
+import type { RevokeTokenInterface } from "./Requests/RevokeTokenInterface.js";
+import type { ValidateTokenInterface } from "./Requests/ValidateTokenInterface.js";
+import type { AuthenticateResponse } from "./Responses/AuthenticateResponse.js";
+import type { RegisterUserResponse } from "./Responses/RegisterUserResponse.js";
+import type { ValidateTokenResponse } from "./Responses/ValidateTokenResponse.js";
+import { SimpleJwtLoginApiError } from "./Responses/SimpleJwtLoginError.js";
+import { InMemoryTokenStorage, type TokenStorage } from "./TokenStorage.js";
 
 /**
  * Polyfill for atob (base64 decode) for environments where it's not available.
@@ -52,11 +52,17 @@ export interface SimpleJwtLoginOptions {
   authCodeKey?: string;
 
   /**
+   * Optional default auth code automatically sent on requests (including silent token refresh)
+   * when no explicit `authCode` argument is passed to a method.
+   */
+  defaultAuthCode?: string;
+
+  /**
    * Token storage implementation.
    * Defaults to in-memory storage (tokens lost on page reload).
    * Use `LocalStorageTokenStorage` for a PWA:
    * @example
-   * import { LocalStorageTokenStorage } from "simple-jwt-login/TokenStorage";
+   * import { SimpleJwtLogin, LocalStorageTokenStorage } from "simple-jwt-login";
    * new SimpleJwtLogin("https://example.com", {
    *   tokenStorage: new LocalStorageTokenStorage("my-app"),
    * });
@@ -72,19 +78,36 @@ export interface SimpleJwtLoginOptions {
   onTokenRefreshed?: (jwt: string, refreshToken: string) => void;
 
   /**
+   * Called when a silent token refresh fails due to an authentication/authorization
+   * rejection from the server (e.g., HTTP 400, 401, 403 — expired or revoked refresh token)
+   * and stored tokens are cleared. Not called on transient network/offline or 5xx errors.
+   * @param error - The API error returned by the server
+   */
+  onSessionExpired?: (error: SimpleJwtLoginApiError) => void;
+
+  /**
    * How many seconds before JWT expiry a proactive refresh is triggered.
    * Defaults to 60 seconds.
    */
   refreshBeforeExpirySeconds?: number;
+
+  /**
+   * Use pretty permalinks (`/wp-json<namespace>`) instead of `/?rest_route=<namespace>`.
+   * Defaults to `false` (`/?rest_route=` works regardless of WordPress permalink settings).
+   */
+  useWpJson?: boolean;
 }
 
 export class SimpleJwtLogin {
   private readonly host: string;
   private readonly namespace: string;
   private readonly authCodeKey: string;
+  private readonly defaultAuthCode: string;
   private readonly storage: TokenStorage;
   private readonly onTokenRefreshed: ((jwt: string, refreshToken: string) => void) | undefined;
+  private readonly onSessionExpired: ((error: SimpleJwtLoginApiError) => void) | undefined;
   private readonly refreshBeforeExpirySeconds: number;
+  private readonly useWpJson: boolean;
 
   /** Flag to prevent concurrent refresh calls */
   private isRefreshing = false;
@@ -95,12 +118,16 @@ export class SimpleJwtLogin {
    * @param options SDK configuration options
    */
   constructor(host: string, options: SimpleJwtLoginOptions = {}) {
-    this.host = host;
-    this.namespace = options.namespace ?? "/simple-jwt-login/v1";
+    this.host = host.replace(/\/+$/, "");
+    const rawNamespace = (options.namespace ?? "/simple-jwt-login/v1").replace(/\/+$/, "");
+    this.namespace = rawNamespace.startsWith("/") ? rawNamespace : `/${rawNamespace}`;
     this.authCodeKey = options.authCodeKey ?? "AUTH_KEY";
+    this.defaultAuthCode = options.defaultAuthCode ?? "";
     this.storage = options.tokenStorage ?? new InMemoryTokenStorage();
     this.onTokenRefreshed = options.onTokenRefreshed;
+    this.onSessionExpired = options.onSessionExpired;
     this.refreshBeforeExpirySeconds = options.refreshBeforeExpirySeconds ?? 60;
+    this.useWpJson = options.useWpJson ?? false;
   }
 
   // ─── Token Management ──────────────────────────────────────────────────────
@@ -123,26 +150,114 @@ export class SimpleJwtLogin {
   }
 
   /**
-   * Clears all stored tokens (logout).
+   * Returns the current refresh token, or null if none is stored.
+   */
+  getRefreshToken(): string | null {
+    return this.storage.getRefreshToken();
+  }
+
+  /**
+   * Returns true if the client holds a non-expired JWT or a refresh token
+   * capable of renewing the session.
+   */
+  isAuthenticated(): boolean {
+    const refreshToken = this.storage.getRefreshToken();
+    if (refreshToken) {
+      return true;
+    }
+    const jwt = this.storage.getJwt();
+    if (!jwt) {
+      return false;
+    }
+    return !this.isJwtExpiringSoon(jwt, 0);
+  }
+
+  /**
+   * Clears all stored tokens locally (without calling the server).
    */
   clearTokens(): void {
     this.storage.clearTokens();
   }
 
   /**
+   * Logs out the user: attempts to revoke the current JWT server-side (ignoring network
+   * or revocation errors if offline) and always clears local token storage.
+   *
+   * @param authCode Optional auth code
+   */
+  async logout(authCode = ""): Promise<void> {
+    const jwt = this.storage.getJwt();
+    this.storage.clearTokens();
+    if (jwt) {
+      try {
+        await this.revokeToken({ JWT: jwt }, authCode);
+      } catch {
+        // Ignore network/server errors during logout since local tokens are already cleared
+      }
+    }
+  }
+
+  /**
    * Returns a valid (non-expired) JWT.
    * If the stored JWT is close to expiry, it is silently refreshed first.
+   * If a refresh token is stored without a JWT, it attempts to obtain a new JWT.
    * Returns null if not authenticated or if refresh fails.
+   *
+   * @param forceRefresh When true, forces a silent refresh even if the local JWT does not appear expired.
    */
-  async getValidJwt(): Promise<string | null> {
+  async getValidJwt(forceRefresh = false): Promise<string | null> {
     const jwt = this.storage.getJwt();
-    if (!jwt) return null;
+    if (!jwt) {
+      if (this.storage.getRefreshToken()) {
+        return this.silentRefresh();
+      }
+      return null;
+    }
 
-    if (this.isJwtExpiringSoon(jwt)) {
+    if (forceRefresh || this.isJwtExpiringSoon(jwt)) {
       return this.silentRefresh();
     }
 
     return jwt;
+  }
+
+  /**
+   * Performs an authenticated `fetch` request to any WordPress REST API endpoint.
+   * Automatically attaches `Authorization: Bearer <jwt>` using `getValidJwt()`.
+   * If the server responds with `401 Unauthorized`, forces a silent token refresh once
+   * and retries the request with the new JWT.
+   *
+   * @param input Request URL or Request object (relative paths are resolved against `host`)
+   * @param init Optional fetch RequestInit options
+   */
+  async fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+    const resolvedInput =
+      typeof input === "string" && input.startsWith("/")
+        ? `${this.host}${input}`
+        : input;
+
+    const jwt = await this.getValidJwt();
+    const executeFetch = (token: string | null): Promise<Response> => {
+      const headers = new Headers(init.headers);
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      return fetch(resolvedInput, {
+        ...init,
+        headers,
+      });
+    };
+
+    const response = await executeFetch(jwt);
+
+    if (response.status === 401 && (this.storage.getRefreshToken() || this.storage.getJwt())) {
+      const refreshedJwt = await this.getValidJwt(true);
+      if (refreshedJwt && refreshedJwt !== jwt) {
+        return executeFetch(refreshedJwt);
+      }
+    }
+
+    return response;
   }
 
   // ─── Auth Endpoints ────────────────────────────────────────────────────────
@@ -158,8 +273,9 @@ export class SimpleJwtLogin {
     params: AuthenticateInterface,
     authCode = "",
   ): Promise<AuthenticateResponse> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
 
     const response = await this.call<AuthenticateResponse>("POST", "/auth", params);
@@ -185,8 +301,9 @@ export class SimpleJwtLogin {
     params: ValidateTokenInterface,
     authCode = "",
   ): Promise<ValidateTokenResponse> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
     return this.call<ValidateTokenResponse>("GET", "/auth/validate", params);
   }
@@ -200,18 +317,18 @@ export class SimpleJwtLogin {
    * @param authCode Optional auth code
    */
   public async refreshToken(
-    params: RefreshTokenInterface,
+    params: RefreshTokenInterface = {},
     authCode = "",
   ): Promise<AuthenticateResponse> {
-    // Build request body - prioritize refresh_token (plugin v4 API)
-    const body: Record<string, string> = {};
-    
+    const { refresh_token, JWT, ...rest } = params;
+    const body: Record<string, unknown> = { ...rest };
+
     // Prefer refresh_token as per plugin v4 API specification
-    if (params.refresh_token) {
-      body.refresh_token = params.refresh_token;
-    } else if (params.JWT) {
+    if (refresh_token) {
+      body.refresh_token = refresh_token;
+    } else if (JWT) {
       // Fallback to JWT for backward compatibility
-      body.JWT = params.JWT;
+      body.JWT = JWT;
     } else {
       // If no token provided in params, use the stored refresh token
       const storedRefreshToken = this.storage.getRefreshToken();
@@ -220,8 +337,9 @@ export class SimpleJwtLogin {
       }
     }
 
-    if (authCode !== "") {
-      body[this.authCodeKey] = authCode;
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      body[this.authCodeKey] = effectiveAuthCode;
     }
 
     const response = await this.call<AuthenticateResponse>("POST", "/auth/refresh", body);
@@ -251,8 +369,9 @@ export class SimpleJwtLogin {
     params: RevokeTokenInterface,
     authCode = "",
   ): Promise<unknown> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
     return this.call("POST", "/auth/revoke", params);
   }
@@ -267,11 +386,13 @@ export class SimpleJwtLogin {
    * @param authCode Optional auth code
    */
   public autologin(params: AutologinInterface, authCode = ""): string {
-    const p = { ...params };
-    if (authCode !== "") {
-      p[this.authCodeKey] = authCode;
+    const p: Record<string, unknown> = { ...params };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      p[this.authCodeKey] = effectiveAuthCode;
     }
-    return this.buildUrl() + "/autologin&" + this.queryData(p);
+    const separator = this.useWpJson ? "?" : "&";
+    return this.buildUrl() + "/autologin" + separator + this.queryData(p);
   }
 
   /**
@@ -288,8 +409,9 @@ export class SimpleJwtLogin {
     params: RegisterUserInterface,
     authCode = "",
   ): Promise<RegisterUserResponse> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
     return this.call<RegisterUserResponse>("POST", "/users", params);
   }
@@ -304,8 +426,9 @@ export class SimpleJwtLogin {
     params: DeleteUserInterface,
     authCode = "",
   ): Promise<unknown> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
     return this.call("DELETE", "/users", params);
   }
@@ -320,8 +443,9 @@ export class SimpleJwtLogin {
     params: ResetPasswordInterface,
     authCode = "",
   ): Promise<unknown> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
     return this.call("POST", "/user/reset_password", params);
   }
@@ -336,8 +460,9 @@ export class SimpleJwtLogin {
     params: ChangePasswordInterface,
     authCode = "",
   ): Promise<unknown> {
-    if (authCode !== "") {
-      params = { ...params, [this.authCodeKey]: authCode };
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
     return this.call("PUT", "/user/reset_password", params);
   }
@@ -347,59 +472,92 @@ export class SimpleJwtLogin {
   /**
    * Silently refresh the JWT using the stored refresh token.
    * Concurrent calls are deduplicated — only one refresh runs at a time.
+   *
+   * PWA resilience:
+   * - Transient network errors (offline, DNS failure, timeout) or 5xx server errors
+   *   do NOT clear stored tokens so the user stays logged in when connectivity returns.
+   * - Multi-tab rotation recovery: if another tab already refreshed the JWT in shared
+   *   storage while this tab's refresh failed, the fresh JWT from storage is returned.
    */
   private silentRefresh(): Promise<string | null> {
     if (this.isRefreshing && this.refreshPromise) {
       return this.refreshPromise;
     }
 
-    const refreshToken = this.storage.getRefreshToken();
-    const currentJwt = this.storage.getJwt();
+    const initialRefreshToken = this.storage.getRefreshToken();
+    const initialJwt = this.storage.getJwt();
 
-    if (!refreshToken && !currentJwt) {
+    if (!initialRefreshToken && !initialJwt) {
       return Promise.resolve(null);
     }
 
     this.isRefreshing = true;
-    this.refreshPromise = this.refreshToken(
-      refreshToken
-        ? { refresh_token: refreshToken }
-        : { JWT: currentJwt ?? "" },
-    )
-      .then((response) => {
-        this.isRefreshing = false;
-        this.refreshPromise = null;
+    this.refreshPromise = (async () => {
+      try {
+        const response = await this.refreshToken(
+          initialRefreshToken
+            ? { refresh_token: initialRefreshToken }
+            : { JWT: initialJwt ?? "" },
+        );
         return response.data?.jwt ?? null;
-      })
-      .catch(() => {
+      } catch (error) {
+        // Multi-tab recovery: check if another tab updated storage with a valid JWT
+        const latestJwt = this.storage.getJwt();
+        if (latestJwt && latestJwt !== initialJwt && !this.isJwtExpiringSoon(latestJwt)) {
+          return latestJwt;
+        }
+
+        // Only clear tokens if the server explicitly rejected the token/credentials (400, 401, 403)
+        if (
+          error instanceof SimpleJwtLoginApiError &&
+          (error.status === 400 || error.status === 401 || error.status === 403)
+        ) {
+          this.storage.clearTokens();
+          this.onSessionExpired?.(error);
+          return null;
+        }
+
+        // For network errors (offline PWA) or 5xx server errors, keep stored tokens intact.
+        // If the current JWT is not yet strictly expired (exp > now), return it as a fallback.
+        if (initialJwt && !this.isJwtExpiringSoon(initialJwt, 0)) {
+          return initialJwt;
+        }
+
+        return null;
+      } finally {
         this.isRefreshing = false;
         this.refreshPromise = null;
-        this.storage.clearTokens();
-        return null;
-      });
+      }
+    })();
 
     return this.refreshPromise;
   }
 
   /**
-   * Decode the JWT payload and check if it expires within `refreshBeforeExpirySeconds`.
+   * Decode the JWT payload and check if it expires within `thresholdSeconds`.
    * Works in both browser and Node.js environments.
    */
-  private isJwtExpiringSoon(jwt: string): boolean {
+  private isJwtExpiringSoon(
+    jwt: string,
+    thresholdSeconds = this.refreshBeforeExpirySeconds,
+  ): boolean {
     try {
       const parts = jwt.split(".");
       if (parts.length !== 3) return false;
       // Use base64url decoder for JWT payload compatibility
       const payload = JSON.parse(decodeBase64Url(parts[1])) as { exp?: number };
       if (typeof payload.exp !== "number") return false;
-      return Date.now() / 1000 >= payload.exp - this.refreshBeforeExpirySeconds;
+      return Date.now() / 1000 >= payload.exp - thresholdSeconds;
     } catch {
       return false;
     }
   }
 
   private buildUrl(): string {
-    return this.host + "/?rest_route=" + this.namespace;
+    if (this.useWpJson) {
+      return `${this.host}/wp-json${this.namespace}`;
+    }
+    return `${this.host}/?rest_route=${this.namespace}`;
   }
 
   private queryData(data: Record<string, unknown>): string {
@@ -431,7 +589,8 @@ export class SimpleJwtLogin {
     };
 
     if (method === "GET" && params) {
-      callUrl = callUrl + "&" + this.queryData(params as Record<string, unknown>);
+      const separator = this.useWpJson ? "?" : "&";
+      callUrl = callUrl + separator + this.queryData(params as Record<string, unknown>);
     } else if (params) {
       fetchOptions.body = JSON.stringify(params);
     }
@@ -443,18 +602,20 @@ export class SimpleJwtLogin {
       let errorCode: number | undefined;
       let errorMessage: string;
       let responseData: unknown = null;
-      
+
       try {
         const parsed = JSON.parse(errorText);
         responseData = parsed;
-        
+
         // Extract error_code from plugin response (can be at root or in data)
-        if (typeof parsed.error_code === 'number') {
+        if (typeof parsed.error_code === "number") {
           errorCode = parsed.error_code;
-        } else if (parsed.data?.error_code && typeof parsed.data.error_code === 'number') {
+        } else if (typeof parsed.errorCode === "number") {
+          errorCode = parsed.errorCode;
+        } else if (typeof parsed.data?.error_code === "number") {
           errorCode = parsed.data.error_code;
         }
-        
+
         // Extract message (can be at root or in data)
         if (parsed.message) {
           errorMessage = parsed.message;

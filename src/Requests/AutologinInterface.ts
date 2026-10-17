@@ -1,7 +1,7 @@
 export interface AutologinInterface {
   JWT: string;
 
-  redirectUrl: string | null;
+  redirectUrl?: string | null;
 
-  [key: string]: string | number | null | boolean | object;
+  [key: string]: string | number | null | boolean | object | undefined;
 }

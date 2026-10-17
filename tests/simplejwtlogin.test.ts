@@ -55,21 +55,93 @@ describe("SimpleJwtLogin", () => {
       });
       expect(s).toBeDefined();
     });
-  });
 
-  // ── Token Management ────────────────────────────────────────────────────────
-
-  describe("Token Management", () => {
-    it("setTokens / getJwt / clearTokens", () => {
-      sdk.setTokens("my-jwt", "my-refresh");
-      expect(sdk.getJwt()).toBe("my-jwt");
-      sdk.clearTokens();
-      expect(sdk.getJwt()).toBeNull();
+    it("should normalize trailing slashes on host and namespace", () => {
+      const s = new SimpleJwtLogin("http://example.com///", {
+        namespace: "custom/v1/",
+      });
+      const url = s.autologin({ JWT: "tok" });
+      expect(url).toBe("http://example.com/?rest_route=/custom/v1/autologin&JWT=tok");
     });
 
-    it("getValidJwt returns null when no JWT is stored", async () => {
+    it("should support useWpJson pretty permalinks option", async () => {
+      const s = new SimpleJwtLogin("http://example.com/", { useWpJson: true });
+      expect(s.autologin({ JWT: "tok" })).toBe(
+        "http://example.com/wp-json/simple-jwt-login/v1/autologin?JWT=tok",
+      );
+
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest.fn().mockResolvedValueOnce(JSON.stringify({ success: true })),
+      });
+      await s.validateToken({ JWT: "tok" });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "http://example.com/wp-json/simple-jwt-login/v1/auth/validate?JWT=tok",
+        expect.objectContaining({ method: "GET" }),
+      );
+    });
+  });
+
+  // ── Token Management & PWA Resilience ───────────────────────────────────────
+
+  describe("Token Management", () => {
+    it("setTokens / getJwt / getRefreshToken / clearTokens", () => {
+      sdk.setTokens("my-jwt", "my-refresh");
+      expect(sdk.getJwt()).toBe("my-jwt");
+      expect(sdk.getRefreshToken()).toBe("my-refresh");
+      sdk.clearTokens();
+      expect(sdk.getJwt()).toBeNull();
+      expect(sdk.getRefreshToken()).toBeNull();
+    });
+
+    it("isAuthenticated checks refresh token or non-expired JWT", () => {
+      expect(sdk.isAuthenticated()).toBe(false);
+
+      // Valid JWT without refresh token
+      sdk.setTokens(buildJwt(3600));
+      expect(sdk.isAuthenticated()).toBe(true);
+
+      // Expired JWT without refresh token
+      sdk.setTokens(buildJwt(-10));
+      expect(sdk.isAuthenticated()).toBe(false);
+
+      // Expired JWT WITH refresh token -> still authenticated (can refresh)
+      sdk.setTokens(buildJwt(-10), "valid-refresh");
+      expect(sdk.isAuthenticated()).toBe(true);
+    });
+
+    it("logout revokes token server-side and clears local storage even if offline", async () => {
+      sdk.setTokens("my-jwt", "my-refresh");
+      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+      await sdk.logout();
+      expect(sdk.getJwt()).toBeNull();
+      expect(sdk.getRefreshToken()).toBeNull();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/auth/revoke",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("getValidJwt returns null when no JWT or refresh token is stored", async () => {
       const result = await sdk.getValidJwt();
       expect(result).toBeNull();
+    });
+
+    it("getValidJwt refreshes when only refresh token is stored", async () => {
+      const storage = new InMemoryTokenStorage();
+      storage.setRefreshToken("only-refresh");
+      const s = new SimpleJwtLogin(host, { tokenStorage: storage });
+
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({ success: true, data: { jwt: "recovered-jwt" } }),
+        ),
+      });
+
+      const result = await s.getValidJwt();
+      expect(result).toBe("recovered-jwt");
     });
 
     it("getValidJwt returns JWT directly when not expiring soon", async () => {
@@ -141,19 +213,98 @@ describe("SimpleJwtLogin", () => {
       expect(result).toBe(b64urlJwt);
     });
 
-    it("getValidJwt clears tokens and returns null when refresh fails", async () => {
+    it("getValidJwt clears tokens and fires onSessionExpired on 401/403 auth rejection", async () => {
+      const onSessionExpired = jest.fn();
+      const s = new SimpleJwtLogin(host, { onSessionExpired });
       const expiredJwt = buildJwt(10);
-      sdk.setTokens(expiredJwt, "bad-refresh");
+      s.setTokens(expiredJwt, "bad-refresh");
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 401,
-        text: jest.fn().mockResolvedValueOnce("Unauthorized"),
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({ success: false, error_code: 51, data: { message: "Refresh token expired" } }),
+        ),
       });
 
-      const result = await sdk.getValidJwt();
+      const result = await s.getValidJwt();
       expect(result).toBeNull();
-      expect(sdk.getJwt()).toBeNull();
+      expect(s.getJwt()).toBeNull();
+      expect(s.getRefreshToken()).toBeNull();
+      expect(onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(onSessionExpired.mock.calls[0][0]).toBeInstanceOf(SimpleJwtLoginApiError);
+    });
+
+    it("PWA resilience: preserves tokens on network failure or 5xx error during silent refresh", async () => {
+      const onSessionExpired = jest.fn();
+      const s = new SimpleJwtLogin(host, { onSessionExpired });
+      // Already expired JWT (-30s) + valid refresh token
+      const expiredJwt = buildJwt(-30);
+      s.setTokens(expiredJwt, "durable-refresh-token");
+
+      // 1. Offline / network error
+      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const offlineResult = await s.getValidJwt();
+      expect(offlineResult).toBeNull();
+      // Crucial for PWA: refresh_token must NOT be wiped!
+      expect(s.getRefreshToken()).toBe("durable-refresh-token");
+      expect(onSessionExpired).not.toHaveBeenCalled();
+
+      // 2. Temporary 503 Server Error
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: jest.fn().mockResolvedValueOnce("Service Unavailable"),
+      });
+      const serverErrorResult = await s.getValidJwt();
+      expect(serverErrorResult).toBeNull();
+      expect(s.getRefreshToken()).toBe("durable-refresh-token");
+
+      // 3. Connectivity returns -> refresh succeeds seamlessly without re-login!
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({ success: true, data: { jwt: "recovered-jwt", refresh_token: "rotated-refresh" } }),
+        ),
+      });
+      const recoveredResult = await s.getValidJwt();
+      expect(recoveredResult).toBe("recovered-jwt");
+      expect(s.getRefreshToken()).toBe("rotated-refresh");
+    });
+
+    it("PWA resilience: returns still-valid JWT if proactive refresh fails due to offline network", async () => {
+      // JWT expires in 30s (within 60s threshold, so proactive refresh triggers, but token is still valid!)
+      const soonExpiringJwt = buildJwt(30);
+      sdk.setTokens(soonExpiringJwt, "my-refresh");
+
+      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Network error"));
+
+      const result = await sdk.getValidJwt();
+      expect(result).toBe(soonExpiringJwt);
+      expect(sdk.getRefreshToken()).toBe("my-refresh");
+    });
+
+    it("PWA multi-tab recovery: uses updated JWT from storage if another tab refreshed concurrently", async () => {
+      const storage = new InMemoryTokenStorage();
+      const s = new SimpleJwtLogin(host, { tokenStorage: storage });
+      const oldJwt = buildJwt(-10);
+      const newTabJwt = buildJwt(3600);
+      s.setTokens(oldJwt, "old-refresh");
+
+      (globalThis.fetch as jest.Mock).mockImplementationOnce(async () => {
+        // Simulate another tab updating shared storage before this tab's request fails with 401
+        storage.setJwt(newTabJwt);
+        storage.setRefreshToken("new-tab-refresh");
+        return {
+          ok: false,
+          status: 401,
+          text: async () => JSON.stringify({ success: false, error_code: 51 }),
+        };
+      });
+
+      const result = await s.getValidJwt();
+      expect(result).toBe(newTabJwt);
+      expect(s.getRefreshToken()).toBe("new-tab-refresh");
     });
 
     it("concurrent getValidJwt calls deduplicate the refresh request", async () => {
@@ -176,6 +327,71 @@ describe("SimpleJwtLogin", () => {
     });
   });
 
+  // ── fetchWithAuth (WordPress REST API helper) ───────────────────────────────
+
+  describe("fetchWithAuth", () => {
+    it("attaches Authorization Bearer header and resolves relative paths against host", async () => {
+      const validJwt = buildJwt(3600);
+      sdk.setTokens(validJwt, "refresh-tok");
+
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [] }),
+      });
+
+      const response = await sdk.fetchWithAuth("/wp-json/my-plugin/v1/items", {
+        method: "POST",
+        headers: { "X-Custom": "1" },
+      });
+
+      expect(response.status).toBe(200);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const [calledUrl, calledInit] = (globalThis.fetch as jest.Mock).mock.calls[0];
+      expect(calledUrl).toBe("http://example.com/wp-json/my-plugin/v1/items");
+      const headers = calledInit.headers as Headers;
+      expect(headers.get("Authorization")).toBe(`Bearer ${validJwt}`);
+      expect(headers.get("X-Custom")).toBe("1");
+    });
+
+    it("automatically forces token refresh and retries once on 401 response (clock skew / revoked JWT)", async () => {
+      const initialJwt = buildJwt(3600); // appears valid locally, but rejected by WP
+      const refreshedJwt = buildJwt(7200);
+      sdk.setTokens(initialJwt, "my-refresh-token");
+
+      // 1st call: WP plugin API returns 401
+      // 2nd call: /auth/refresh returns new JWT
+      // 3rd call: retried WP plugin API returns 200
+      (globalThis.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          text: async () => "Expired token",
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              success: true,
+              data: { jwt: refreshedJwt, refresh_token: "new-refresh-token" },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+        });
+
+      const response = await sdk.fetchWithAuth("http://example.com/wp-json/my-plugin/v1/profile");
+      expect(response.status).toBe(200);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+
+      const retryHeaders = (globalThis.fetch as jest.Mock).mock.calls[2][1].headers as Headers;
+      expect(retryHeaders.get("Authorization")).toBe(`Bearer ${refreshedJwt}`);
+    });
+  });
+
   // ── autologin ───────────────────────────────────────────────────────────────
 
   describe("autologin", () => {
@@ -188,7 +404,7 @@ describe("SimpleJwtLogin", () => {
     });
 
     it("should append authCode if provided", () => {
-      const params = { JWT: "my-jwt-token", redirectUrl: null };
+      const params = { JWT: "my-jwt-token" };
       const url = sdk.autologin(params, "secret123");
       expect(url).toBe(
         "http://example.com/?rest_route=/simple-jwt-login/v1/autologin&JWT=my-jwt-token&AUTH_KEY=secret123",
@@ -343,9 +559,9 @@ describe("SimpleJwtLogin", () => {
     });
   });
 
-  // ── validateToken ───────────────────────────────────────────────────────────
+  // ── validateToken & User Endpoints ──────────────────────────────────────────
 
-  describe("validateToken", () => {
+  describe("validateToken & User Endpoints", () => {
     it("should make a GET request to /auth/validate", async () => {
       const mockResponse = {
         success: true,
@@ -365,6 +581,67 @@ describe("SimpleJwtLogin", () => {
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "http://example.com/?rest_route=/simple-jwt-login/v1/auth/validate&JWT=token-to-validate",
         expect.objectContaining({ method: "GET" }),
+      );
+    });
+
+    it("should register a user with only required fields (email & password)", async () => {
+      const mockResponse = { success: true, data: { id: 42 } };
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest.fn().mockResolvedValueOnce(JSON.stringify(mockResponse)),
+      });
+
+      const result = await sdk.registerUser({
+        email: "new@example.com",
+        password: "secret",
+        first_name: "John",
+      });
+
+      expect(result.data?.id).toBe(42);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/users",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            email: "new@example.com",
+            password: "secret",
+            first_name: "John",
+          }),
+        }),
+      );
+    });
+
+    it("should support revokeToken, deleteUser, resetPassword, and changePassword", async () => {
+      (globalThis.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        text: jest.fn().mockResolvedValue(JSON.stringify({ success: true })),
+      });
+
+      await sdk.revokeToken({ JWT: "tok" });
+      expect(globalThis.fetch).toHaveBeenLastCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/auth/revoke",
+        expect.objectContaining({ method: "POST" }),
+      );
+
+      await sdk.deleteUser({ JWT: "tok" }, "auth-del");
+      expect(globalThis.fetch).toHaveBeenLastCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/users",
+        expect.objectContaining({
+          method: "DELETE",
+          body: JSON.stringify({ JWT: "tok", AUTH_KEY: "auth-del" }),
+        }),
+      );
+
+      await sdk.resetPassword({ email: "a@b.com" });
+      expect(globalThis.fetch).toHaveBeenLastCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/user/reset_password",
+        expect.objectContaining({ method: "POST" }),
+      );
+
+      await sdk.changePassword({ email: "a@b.com", new_password: "new", code: "123" });
+      expect(globalThis.fetch).toHaveBeenLastCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/user/reset_password",
+        expect.objectContaining({ method: "PUT" }),
       );
     });
   });

@@ -1,22 +1,22 @@
 // Core SDK
-export * from "./src/simplejwtlogin";
+export * from "./src/simplejwtlogin.js";
 
 // Token storage
-export * from "./src/TokenStorage";
+export * from "./src/TokenStorage.js";
 
 // Request interfaces
-export * from "./src/Requests/AuthenticateInterface";
-export * from "./src/Requests/AutologinInterface";
-export * from "./src/Requests/ChangePasswordInterface";
-export * from "./src/Requests/DeleteUserInterface";
-export * from "./src/Requests/RefreshTokenInterface";
-export * from "./src/Requests/RegisterUserInterface";
-export * from "./src/Requests/ResetPasswordInterface";
-export * from "./src/Requests/RevokeTokenInterface";
-export * from "./src/Requests/ValidateTokenInterface";
+export type * from "./src/Requests/AuthenticateInterface.js";
+export type * from "./src/Requests/AutologinInterface.js";
+export type * from "./src/Requests/ChangePasswordInterface.js";
+export type * from "./src/Requests/DeleteUserInterface.js";
+export type * from "./src/Requests/RefreshTokenInterface.js";
+export type * from "./src/Requests/RegisterUserInterface.js";
+export type * from "./src/Requests/ResetPasswordInterface.js";
+export type * from "./src/Requests/RevokeTokenInterface.js";
+export type * from "./src/Requests/ValidateTokenInterface.js";
 
-// Response interfaces
-export * from "./src/Responses/AuthenticateResponse";
-export * from "./src/Responses/RegisterUserResponse";
-export * from "./src/Responses/ValidateTokenResponse";
-export * from "./src/Responses/SimpleJwtLoginError";
+// Response interfaces & errors
+export type * from "./src/Responses/AuthenticateResponse.js";
+export type * from "./src/Responses/RegisterUserResponse.js";
+export type * from "./src/Responses/ValidateTokenResponse.js";
+export * from "./src/Responses/SimpleJwtLoginError.js";

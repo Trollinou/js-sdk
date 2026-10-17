@@ -138,8 +138,8 @@ export class LocalStorageTokenStorage implements TokenStorage {
 
 /**
  * Cookie-based token storage.
- * Tokens are stored in HTTP-only cookies for enhanced security.
- * Recommended for traditional web apps that need cookie-based authentication.
+ * Tokens are stored in browser cookies (`document.cookie`) with configurable SameSite/Secure flags.
+ * Recommended for web apps that share authentication state via client-side cookies.
  *
  * @example
  * const sdk = new SimpleJwtLogin("https://example.com", {

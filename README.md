@@ -54,14 +54,15 @@ const sdk = new SimpleJwtLogin("https://your-wordpress.com", {
 const response = await sdk.authenticate({ login: "user@example.com", password: "secret" });
 // JWT and refresh token are automatically stored
 
-// 3. Get a fresh JWT for protected API calls (auto-refresh if needed)
-const jwt = await sdk.getValidJwt();
-fetch("https://your-wordpress.com/wp-json/wc/v3/orders", {
-  headers: { Authorization: `Bearer ${jwt}` },
-});
+// 3. Call your WordPress REST APIs with automatic Bearer header & 401 retry
+const ordersRes = await sdk.fetchWithAuth("/wp-json/wc/v3/orders");
+const orders = await ordersRes.json();
 
-// 4. Logout
-sdk.clearTokens();
+// (Or retrieve a valid JWT manually)
+const jwt = await sdk.getValidJwt();
+
+// 4. Logout (revokes JWT server-side if online and clears local storage)
+await sdk.logout();
 ```
 
 ---
@@ -76,9 +77,12 @@ new SimpleJwtLogin(host, options?)
 |--------|------|---------|-------------|
 | `namespace` | `string` | `"/simple-jwt-login/v1"` | Route namespace — must match plugin settings |
 | `authCodeKey` | `string` | `"AUTH_KEY"` | Auth code parameter name — must match plugin settings |
+| `defaultAuthCode` | `string` | `""` | Default auth code automatically included in requests (including silent refresh) |
 | `tokenStorage` | `TokenStorage` | `InMemoryTokenStorage` | Where to persist JWT and refresh token |
 | `onTokenRefreshed` | `(jwt, refreshToken) => void` | — | Callback fired after every successful silent refresh |
+| `onSessionExpired` | `(error) => void` | — | Callback fired when refresh token is rejected by server (`400`/`401`/`403`) and storage is cleared |
 | `refreshBeforeExpirySeconds` | `number` | `60` | Trigger proactive refresh this many seconds before expiry |
+| `useWpJson` | `boolean` | `false` | Use `/wp-json<namespace>` pretty permalinks instead of `/?rest_route=<namespace>` |
 
 ```typescript
 import { SimpleJwtLogin, LocalStorageTokenStorage } from "simple-jwt-login";
@@ -90,6 +94,9 @@ const sdk = new SimpleJwtLogin("https://your-wordpress.com", {
   refreshBeforeExpirySeconds: 60,
   onTokenRefreshed: (jwt, refreshToken) => {
     console.log("Tokens silently refreshed");
+  },
+  onSessionExpired: (error) => {
+    console.warn("Session expired, redirecting to login", error.errorCode);
   },
 });
 ```
