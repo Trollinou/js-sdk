@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "publish": "npm publish",
-    "prepublishOnly": "npm run lint && npm test && npm run build",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build",
     "lint": "eslint .",
     "lint-and-fix": "eslint . --fix",
     "prettier:check": "prettier --check .",
