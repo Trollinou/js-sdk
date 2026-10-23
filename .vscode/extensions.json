@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "Vue.volar",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "vitest.explorer",
+    "mrmlnc.vscode-scss",
+    "jock.svg"
+  ],
+  "unwantedRecommendations": [
+    "octref.vetur"
+  ]
+}
