@@ -51,6 +51,11 @@ export class InMemoryTokenStorage implements TokenStorage {
  *   tokenStorage: new LocalStorageTokenStorage("myapp"),
  * });
  *
+ * @warning **Security Notice (CWE-312)**: Storing long-lived refresh tokens in
+ * `localStorage` exposes them to theft via Cross-Site Scripting (XSS). For high-security
+ * applications, consider using `InMemoryTokenStorage` combined with HttpOnly cookies
+ * issued by a backend proxy (BFF pattern).
+ *
  * @note In SSR/Node.js environments where localStorage is not available,
  * all methods will silently return null or no-op. Use InMemoryTokenStorage
  * for server-side rendering.
@@ -146,6 +151,10 @@ export class LocalStorageTokenStorage implements TokenStorage {
  *   tokenStorage: new CookieTokenStorage("myapp"),
  * });
  *
+ * @warning **Security Notice (CWE-312 / CWE-614)**: Cookies set via JavaScript (`document.cookie`)
+ * cannot have the `HttpOnly` flag and remain accessible to XSS attacks. For optimal security,
+ * authentication and refresh tokens should be set in HttpOnly cookies by your backend/proxy.
+ *
  * @note In SSR/Node.js environments where document is not available,
  * all methods will silently return null or no-op. Use InMemoryTokenStorage
  * for server-side rendering.
@@ -158,9 +167,19 @@ export class CookieTokenStorage implements TokenStorage {
    * @param prefix Optional cookie name prefix to namespace tokens (e.g. your app name).
    * @param options Cookie options (default: 7 days expiry, SameSite=Lax)
    */
-  constructor(prefix = "sjl", private readonly options: CookieOptions = {}) {
+  constructor(
+    prefix = "sjl",
+    private readonly options: CookieOptions = {},
+  ) {
     this.jwtKey = `${prefix}_jwt`;
     this.refreshKey = `${prefix}_refresh_token`;
+  }
+
+  /**
+   * Sanitizes cookie attribute values against CRLF injection and delimiter characters.
+   */
+  private sanitizeAttribute(val?: string): string {
+    return val ? val.replace(/[\r\n;]/g, "").trim() : "";
   }
 
   /**
@@ -206,13 +225,21 @@ export class CookieTokenStorage implements TokenStorage {
       return;
     }
     try {
+      const isHttps =
+        typeof window !== "undefined" && window.location?.protocol === "https:";
+      const isSameSiteNone = this.options.sameSite === "None";
+      // Defaults to Secure when on HTTPS or if SameSite=None (required by modern browsers)
+      const secure =
+        (this.options.secure ?? (isHttps || isSameSiteNone)) ? "; Secure" : "";
+
       const expiryDate = new Date();
       expiryDate.setTime(expiryDate.getTime() + days * 24 * 60 * 60 * 1000);
       const expires = `expires=${expiryDate.toUTCString()}`;
-      const path = `path=${this.options.path || "/"}`;
+      const pathValue = this.sanitizeAttribute(this.options.path) || "/";
+      const path = `path=${pathValue}`;
       const sameSite = `SameSite=${this.options.sameSite || "Lax"}`;
-      const secure = this.options.secure ? "; Secure" : "";
-      const domain = this.options.domain ? `; domain=${this.options.domain}` : "";
+      const domainValue = this.sanitizeAttribute(this.options.domain);
+      const domain = domainValue ? `; domain=${domainValue}` : "";
 
       document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; ${expires}; ${path}; ${sameSite}${secure}${domain}`;
     } catch {
@@ -228,8 +255,10 @@ export class CookieTokenStorage implements TokenStorage {
       return;
     }
     try {
-      const path = this.options.path ? `; path=${this.options.path}` : "; path=/";
-      const domain = this.options.domain ? `; domain=${this.options.domain}` : "";
+      const pathValue = this.sanitizeAttribute(this.options.path) || "/";
+      const path = `; path=${pathValue}`;
+      const domainValue = this.sanitizeAttribute(this.options.domain);
+      const domain = domainValue ? `; domain=${domainValue}` : "";
       document.cookie = `${encodeURIComponent(name)}=; expires=Thu, 01 Jan 1970 00:00:00 UTC${path}${domain}`;
     } catch {
       // Silently fail if document.cookie is not accessible

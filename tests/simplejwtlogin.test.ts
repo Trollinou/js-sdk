@@ -1,7 +1,14 @@
 import { AuthenticateInterface } from "../src/Requests/AuthenticateInterface";
 import { SimpleJwtLogin } from "../src/simplejwtlogin";
-import { InMemoryTokenStorage, LocalStorageTokenStorage, CookieTokenStorage } from "../src/TokenStorage";
-import { SimpleJwtLoginApiError, ERROR_CODES } from "../src/Responses/SimpleJwtLoginError";
+import {
+  InMemoryTokenStorage,
+  LocalStorageTokenStorage,
+  CookieTokenStorage,
+} from "../src/TokenStorage";
+import {
+  SimpleJwtLoginApiError,
+  ERROR_CODES,
+} from "../src/Responses/SimpleJwtLoginError";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -17,7 +24,10 @@ function btoaPolyfill(input: string): string {
 
 /** Build a JWT with a given expiry (seconds from now). exp=0 means already expired. */
 function buildJwt(expInSeconds: number): string {
-  const payload = { exp: Math.floor(Date.now() / 1000) + expInSeconds, sub: "1" };
+  const payload = {
+    exp: Math.floor(Date.now() / 1000) + expInSeconds,
+    sub: "1",
+  };
   const encoded = btoaPolyfill(JSON.stringify(payload));
   return `header.${encoded}.signature`;
 }
@@ -61,7 +71,9 @@ describe("SimpleJwtLogin", () => {
         namespace: "custom/v1/",
       });
       const url = s.autologin({ JWT: "tok" });
-      expect(url).toBe("http://example.com/?rest_route=/custom/v1/autologin&JWT=tok");
+      expect(url).toBe(
+        "http://example.com/?rest_route=/custom/v1/autologin&JWT=tok",
+      );
     });
 
     it("should support useWpJson pretty permalinks option", async () => {
@@ -72,13 +84,21 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(JSON.stringify({ success: true })),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(JSON.stringify({ success: true })),
       });
       await s.validateToken({ JWT: "tok" });
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "http://example.com/wp-json/simple-jwt-login/v1/auth/validate?JWT=tok",
         expect.objectContaining({ method: "GET" }),
       );
+    });
+
+    it("should throw an error for malformed or non-http(s) host URLs", () => {
+      expect(() => new SimpleJwtLogin("invalid-url")).toThrow(TypeError);
+      expect(() => new SimpleJwtLogin("javascript:alert(1)")).toThrow(Error);
+      expect(() => new SimpleJwtLogin("data:text/plain,hello")).toThrow(Error);
     });
   });
 
@@ -112,7 +132,9 @@ describe("SimpleJwtLogin", () => {
 
     it("logout revokes token server-side and clears local storage even if offline", async () => {
       sdk.setTokens("my-jwt", "my-refresh");
-      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(
+        new TypeError("Failed to fetch"),
+      );
 
       await sdk.logout();
       expect(sdk.getJwt()).toBeNull();
@@ -135,9 +157,11 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: "recovered-jwt" } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({ success: true, data: { jwt: "recovered-jwt" } }),
+          ),
       });
 
       const result = await s.getValidJwt();
@@ -159,9 +183,14 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: freshJwt, refresh_token: "new-refresh" } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({
+              success: true,
+              data: { jwt: freshJwt, refresh_token: "new-refresh" },
+            }),
+          ),
       });
 
       const result = await sdk.getValidJwt();
@@ -184,9 +213,11 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: freshJwt } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({ success: true, data: { jwt: freshJwt } }),
+          ),
       });
 
       const result = await sdk.getValidJwt();
@@ -205,7 +236,10 @@ describe("SimpleJwtLogin", () => {
       // Payload designed to trigger base64 characters
       const json = JSON.stringify({ exp, sub: "user-123", test: "???>>><<<" });
       const b64 = Buffer.from(json).toString("base64");
-      const b64url = b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const b64url = b64
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
       const b64urlJwt = `header.${b64url}.signature`;
 
       sdk.setTokens(b64urlJwt);
@@ -222,9 +256,15 @@ describe("SimpleJwtLogin", () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 401,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: false, error_code: 51, data: { message: "Refresh token expired" } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({
+              success: false,
+              error_code: 51,
+              data: { message: "Refresh token expired" },
+            }),
+          ),
       });
 
       const result = await s.getValidJwt();
@@ -232,7 +272,9 @@ describe("SimpleJwtLogin", () => {
       expect(s.getJwt()).toBeNull();
       expect(s.getRefreshToken()).toBeNull();
       expect(onSessionExpired).toHaveBeenCalledTimes(1);
-      expect(onSessionExpired.mock.calls[0][0]).toBeInstanceOf(SimpleJwtLoginApiError);
+      expect(onSessionExpired.mock.calls[0][0]).toBeInstanceOf(
+        SimpleJwtLoginApiError,
+      );
     });
 
     it("PWA resilience: preserves tokens on network failure or 5xx error during silent refresh", async () => {
@@ -243,7 +285,9 @@ describe("SimpleJwtLogin", () => {
       s.setTokens(expiredJwt, "durable-refresh-token");
 
       // 1. Offline / network error
-      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(
+        new TypeError("Failed to fetch"),
+      );
       const offlineResult = await s.getValidJwt();
       expect(offlineResult).toBeNull();
       // Crucial for PWA: refresh_token must NOT be wiped!
@@ -263,9 +307,14 @@ describe("SimpleJwtLogin", () => {
       // 3. Connectivity returns -> refresh succeeds seamlessly without re-login!
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: "recovered-jwt", refresh_token: "rotated-refresh" } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({
+              success: true,
+              data: { jwt: "recovered-jwt", refresh_token: "rotated-refresh" },
+            }),
+          ),
       });
       const recoveredResult = await s.getValidJwt();
       expect(recoveredResult).toBe("recovered-jwt");
@@ -277,7 +326,9 @@ describe("SimpleJwtLogin", () => {
       const soonExpiringJwt = buildJwt(30);
       sdk.setTokens(soonExpiringJwt, "my-refresh");
 
-      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(new TypeError("Network error"));
+      (globalThis.fetch as jest.Mock).mockRejectedValueOnce(
+        new TypeError("Network error"),
+      );
 
       const result = await sdk.getValidJwt();
       expect(result).toBe(soonExpiringJwt);
@@ -313,13 +364,18 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: "fresh-jwt" } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({ success: true, data: { jwt: "fresh-jwt" } }),
+          ),
       });
 
       // Fire two concurrent calls
-      const [r1, r2] = await Promise.all([sdk.getValidJwt(), sdk.getValidJwt()]);
+      const [r1, r2] = await Promise.all([
+        sdk.getValidJwt(),
+        sdk.getValidJwt(),
+      ]);
       expect(r1).toBe("fresh-jwt");
       expect(r2).toBe("fresh-jwt");
       // Only one fetch call should have been made
@@ -347,7 +403,8 @@ describe("SimpleJwtLogin", () => {
 
       expect(response.status).toBe(200);
       expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-      const [calledUrl, calledInit] = (globalThis.fetch as jest.Mock).mock.calls[0];
+      const [calledUrl, calledInit] = (globalThis.fetch as jest.Mock).mock
+        .calls[0];
       expect(calledUrl).toBe("http://example.com/wp-json/my-plugin/v1/items");
       const headers = calledInit.headers as Headers;
       expect(headers.get("Authorization")).toBe(`Bearer ${validJwt}`);
@@ -383,12 +440,34 @@ describe("SimpleJwtLogin", () => {
           json: async () => ({ ok: true }),
         });
 
-      const response = await sdk.fetchWithAuth("http://example.com/wp-json/my-plugin/v1/profile");
+      const response = await sdk.fetchWithAuth(
+        "http://example.com/wp-json/my-plugin/v1/profile",
+      );
       expect(response.status).toBe(200);
       expect(globalThis.fetch).toHaveBeenCalledTimes(3);
 
-      const retryHeaders = (globalThis.fetch as jest.Mock).mock.calls[2][1].headers as Headers;
+      const retryHeaders = (globalThis.fetch as jest.Mock).mock.calls[2][1]
+        .headers as Headers;
       expect(retryHeaders.get("Authorization")).toBe(`Bearer ${refreshedJwt}`);
+    });
+
+    it("does not attach Authorization Bearer header when fetching an external origin", async () => {
+      const validJwt = buildJwt(3600);
+      sdk.setTokens(validJwt);
+
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      });
+
+      await sdk.fetchWithAuth("https://external-api.com/v1/webhook");
+
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const [calledUrl, calledInit] = (globalThis.fetch as jest.Mock).mock
+        .calls[0];
+      expect(calledUrl).toBe("https://external-api.com/v1/webhook");
+      const headers = calledInit.headers as Headers;
+      expect(headers.get("Authorization")).toBeNull();
     });
   });
 
@@ -400,6 +479,26 @@ describe("SimpleJwtLogin", () => {
       const url = sdk.autologin(params);
       expect(url).toBe(
         "http://example.com/?rest_route=/simple-jwt-login/v1/autologin&JWT=my-jwt-token&redirectUrl=%2Fdashboard",
+      );
+    });
+
+    it("should reject dangerous protocols in redirectUrl", () => {
+      expect(() =>
+        sdk.autologin({
+          JWT: "tok",
+          redirectUrl: "javascript:alert(document.cookie)",
+        }),
+      ).toThrow(
+        "[SimpleJwtLogin] Dangerous protocol detected in redirectUrl parameter.",
+      );
+
+      expect(() =>
+        sdk.autologin({
+          JWT: "tok",
+          redirectUrl: "data:text/html,<script>alert(1)</script>",
+        }),
+      ).toThrow(
+        "[SimpleJwtLogin] Dangerous protocol detected in redirectUrl parameter.",
       );
     });
 
@@ -425,7 +524,10 @@ describe("SimpleJwtLogin", () => {
         text: jest.fn().mockResolvedValueOnce(JSON.stringify(mockResponse)),
       });
 
-      const params: AuthenticateInterface = { login: "user@example.com", password: "pass" };
+      const params: AuthenticateInterface = {
+        login: "user@example.com",
+        password: "pass",
+      };
       const result = await sdk.authenticate(params);
 
       expect(result).toEqual(mockResponse);
@@ -445,21 +547,31 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: "refreshed-jwt", refresh_token: "new-refresh" } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({
+              success: true,
+              data: { jwt: "refreshed-jwt", refresh_token: "new-refresh" },
+            }),
+          ),
       });
 
       await s.getValidJwt();
-      expect(onTokenRefreshed).toHaveBeenCalledWith("refreshed-jwt", "new-refresh");
+      expect(onTokenRefreshed).toHaveBeenCalledWith(
+        "refreshed-jwt",
+        "new-refresh",
+      );
     });
 
     it("should support legacy username/password fields", async () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: "tok" } }),
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({ success: true, data: { jwt: "tok" } }),
+          ),
       });
 
       const params: AuthenticateInterface = {
@@ -486,9 +598,15 @@ describe("SimpleJwtLogin", () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 401,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: false, error_code: 48, data: { message: "Invalid credentials" } })
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({
+              success: false,
+              error_code: 48,
+              data: { message: "Invalid credentials" },
+            }),
+          ),
       });
 
       try {
@@ -498,7 +616,9 @@ describe("SimpleJwtLogin", () => {
         expect(error).toBeInstanceOf(SimpleJwtLoginApiError);
         expect((error as SimpleJwtLoginApiError).status).toBe(401);
         expect((error as SimpleJwtLoginApiError).errorCode).toBe(48);
-        expect((error as SimpleJwtLoginApiError).message).toBe("Invalid credentials");
+        expect((error as SimpleJwtLoginApiError).message).toBe(
+          "Invalid credentials",
+        );
         expect((error as SimpleJwtLoginApiError).toPluginFormat()).toEqual({
           success: false,
           error_code: 48,
@@ -518,12 +638,19 @@ describe("SimpleJwtLogin", () => {
     it("should use refresh_token parameter as per plugin v4 API", async () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: "new-jwt", refresh_token: "new-refresh" } })
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({
+              success: true,
+              data: { jwt: "new-jwt", refresh_token: "new-refresh" },
+            }),
+          ),
       });
 
-      const result = await sdk.refreshToken({ refresh_token: "my-refresh-token" });
+      const result = await sdk.refreshToken({
+        refresh_token: "my-refresh-token",
+      });
 
       expect(result.data.jwt).toBe("new-jwt");
       expect(result.data.refresh_token).toBe("new-refresh");
@@ -533,16 +660,18 @@ describe("SimpleJwtLogin", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({ refresh_token: "my-refresh-token" }),
-        })
+        }),
       );
     });
 
     it("should fall back to JWT parameter for backward compatibility", async () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest.fn().mockResolvedValueOnce(
-          JSON.stringify({ success: true, data: { jwt: "new-jwt" } })
-        ),
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(
+            JSON.stringify({ success: true, data: { jwt: "new-jwt" } }),
+          ),
       });
 
       const result = await sdk.refreshToken({ JWT: "my-jwt-token" });
@@ -554,7 +683,7 @@ describe("SimpleJwtLogin", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({ JWT: "my-jwt-token" }),
-        })
+        }),
       );
     });
   });
@@ -566,7 +695,12 @@ describe("SimpleJwtLogin", () => {
       const mockResponse = {
         success: true,
         data: {
-          user: { ID: "1", user_login: "admin", user_email: "a@b.com", display_name: "Admin" },
+          user: {
+            ID: "1",
+            user_login: "admin",
+            user_email: "a@b.com",
+            display_name: "Admin",
+          },
           roles: ["administrator"],
         },
       };
@@ -638,7 +772,11 @@ describe("SimpleJwtLogin", () => {
         expect.objectContaining({ method: "POST" }),
       );
 
-      await sdk.changePassword({ email: "a@b.com", new_password: "new", code: "123" });
+      await sdk.changePassword({
+        email: "a@b.com",
+        new_password: "new",
+        code: "123",
+      });
       expect(globalThis.fetch).toHaveBeenLastCalledWith(
         "http://example.com/?rest_route=/simple-jwt-login/v1/user/reset_password",
         expect.objectContaining({ method: "PUT" }),
@@ -670,9 +808,15 @@ describe("SimpleJwtLogin", () => {
       const store: Record<string, string> = {};
       globalThis.localStorage = {
         getItem: (key: string) => store[key] ?? null,
-        setItem: (key: string, val: string) => { store[key] = val; },
-        removeItem: (key: string) => { delete store[key]; },
-        clear: () => { Object.keys(store).forEach(k => delete store[k]); },
+        setItem: (key: string, val: string) => {
+          store[key] = val;
+        },
+        removeItem: (key: string) => {
+          delete store[key];
+        },
+        clear: () => {
+          Object.keys(store).forEach((k) => delete store[k]);
+        },
         length: 0,
         key: () => null,
       };
@@ -697,7 +841,7 @@ describe("SimpleJwtLogin", () => {
     beforeEach(() => {
       // Mock document.cookie using a simple store
       cookieStore = {};
-      
+
       // Helper to get cookie string
       const getCookieString = () => {
         return Object.entries(cookieStore)
@@ -714,7 +858,10 @@ describe("SimpleJwtLogin", () => {
         // Simple parsing - just handle the first key=value pair
         // (full cookie parsing is complex, this is enough for testing)
         const firstSemicolon = cookieString.indexOf(";");
-        const cookiePart = firstSemicolon === -1 ? cookieString : cookieString.substring(0, firstSemicolon);
+        const cookiePart =
+          firstSemicolon === -1
+            ? cookieString
+            : cookieString.substring(0, firstSemicolon);
         const equalsIndex = cookiePart.indexOf("=");
         if (equalsIndex !== -1) {
           const key = cookiePart.substring(0, equalsIndex).trim();
@@ -784,6 +931,29 @@ describe("SimpleJwtLogin", () => {
       expect(storage.getJwt()).toBeNull();
 
       globalThis.document = originalDocument;
+    });
+
+    it("should sanitize path and domain attributes to prevent injection", () => {
+      let rawSetString = "";
+      const customDocument = {
+        get cookie(): string {
+          return "";
+        },
+        set cookie(val: string) {
+          rawSetString = val;
+        },
+      };
+      globalThis.document = customDocument as unknown as Document;
+
+      const storage = new CookieTokenStorage("myapp", {
+        path: "/app; SameSite=None",
+        domain: "example.com\r\nSet-Cookie: evil=1",
+      });
+      storage.setJwt("test");
+      expect(rawSetString).not.toContain("\r");
+      expect(rawSetString).not.toContain("\n");
+      expect(rawSetString).toContain("path=/app SameSite=None");
+      expect(rawSetString).toContain("domain=example.comSet-Cookie: evil=1");
     });
   });
 });

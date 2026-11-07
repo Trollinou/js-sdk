@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-11-07
+
+### Security
+
+- **fetchWithAuth**: Prevented Bearer JWT token leakage by strictly validating target URL origin against the configured host origin before attaching `Authorization` header (CWE-200 / CWE-522)
+- **CookieTokenStorage**:
+  - Sanitized cookie `path` and `domain` options against CRLF and `;` characters to prevent cookie attribute injection (CWE-113)
+  - Automatically enabled `Secure` flag on HTTPS or when `SameSite=None` is specified (CWE-614)
+  - Added security documentation and JSDoc notices regarding client-side refresh token storage risks (CWE-312)
+- **URL & Protocol Validation**: Enforced URL validation in `SimpleJwtLogin` constructor, strictly allowing only `http:` and `https:` protocols and rejecting pseudo-protocols (`javascript:`, `data:`, etc.) (CWE-20)
+- **autologin**: Sanitized and validated `redirectUrl` against dangerous pseudo-protocols (`javascript:`, `data:`, `vbscript:`) to prevent Open Redirect and DOM-based XSS (CWE-601 / CWE-79)
+- **queryData**: Replaced `for...in` loop with `Object.entries()` and filtered out prototype keys (`__proto__`, `constructor`, `prototype`) against prototype pollution (CWE-1321)
+- **Base64 Decoding**: Refactored `atobPolyfill` to use `TextDecoder` / standard `Buffer.from()` with proper UTF-8 decoding and removed `any` cast
+- **CI / Build**:
+  - Added clean build script (`npm run clean`) to purge `dist/` before TypeScript compilation, preventing leftover test files in published npm bundles
+  - Updated CI workflow to use `npm ci` and added automated security audit (`npm audit`)
+
+### Added
+
+- **Unit Tests**: Added security test coverage for cross-origin token isolation, URL/protocol validation, dangerous redirect protocols, and cookie attribute sanitization
+
+---
+
 ## [1.1.3] - 2026-10-13
 
 ### Added

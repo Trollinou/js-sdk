@@ -18,12 +18,22 @@ import { InMemoryTokenStorage, type TokenStorage } from "./TokenStorage.js";
  * Works in browsers (native atob) and Node.js (Buffer fallback).
  */
 function atobPolyfill(input: string): string {
-  if (typeof atob !== "undefined") {
-    return atob(input);
+  if (typeof globalThis.atob === "function") {
+    try {
+      const binaryStr = globalThis.atob(input);
+      const bytes = Uint8Array.from(binaryStr, (c) => c.charCodeAt(0));
+      return new TextDecoder().decode(bytes);
+    } catch {
+      return globalThis.atob(input);
+    }
   }
-  // Node.js fallback using Buffer (available in Node.js environments)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (Buffer as any).from(input, "base64").toString("binary");
+  // Node.js fallback using Buffer
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(input, "base64").toString("utf-8");
+  }
+  throw new Error(
+    "[SimpleJwtLogin] No Base64 decoder available in the current runtime.",
+  );
 }
 
 /**
@@ -104,8 +114,10 @@ export class SimpleJwtLogin {
   private readonly authCodeKey: string;
   private readonly defaultAuthCode: string;
   private readonly storage: TokenStorage;
-  private readonly onTokenRefreshed: ((jwt: string, refreshToken: string) => void) | undefined;
-  private readonly onSessionExpired: ((error: SimpleJwtLoginApiError) => void) | undefined;
+  private readonly onTokenRefreshed:
+    ((jwt: string, refreshToken: string) => void) | undefined;
+  private readonly onSessionExpired:
+    ((error: SimpleJwtLoginApiError) => void) | undefined;
   private readonly refreshBeforeExpirySeconds: number;
   private readonly useWpJson: boolean;
 
@@ -118,9 +130,29 @@ export class SimpleJwtLogin {
    * @param options SDK configuration options
    */
   constructor(host: string, options: SimpleJwtLoginOptions = {}) {
-    this.host = host.replace(/\/+$/, "");
-    const rawNamespace = (options.namespace ?? "/simple-jwt-login/v1").replace(/\/+$/, "");
-    this.namespace = rawNamespace.startsWith("/") ? rawNamespace : `/${rawNamespace}`;
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(host);
+    } catch {
+      throw new TypeError(
+        `[SimpleJwtLogin] Invalid host URL provided: "${host}"`,
+      );
+    }
+
+    if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+      throw new Error(
+        `[SimpleJwtLogin] Unsupported protocol "${parsedUrl.protocol}". Only http: and https: are allowed.`,
+      );
+    }
+
+    this.host = `${parsedUrl.origin}${parsedUrl.pathname}`.replace(/\/+$/, "");
+    const rawNamespace = (options.namespace ?? "/simple-jwt-login/v1").replace(
+      /\/+$/,
+      "",
+    );
+    this.namespace = rawNamespace.startsWith("/")
+      ? rawNamespace
+      : `/${rawNamespace}`;
     this.authCodeKey = options.authCodeKey ?? "AUTH_KEY";
     this.defaultAuthCode = options.defaultAuthCode ?? "";
     this.storage = options.tokenStorage ?? new InMemoryTokenStorage();
@@ -230,16 +262,46 @@ export class SimpleJwtLogin {
    * @param input Request URL or Request object (relative paths are resolved against `host`)
    * @param init Optional fetch RequestInit options
    */
-  async fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-    const resolvedInput =
-      typeof input === "string" && input.startsWith("/")
-        ? `${this.host}${input}`
-        : input;
+  async fetchWithAuth(
+    input: RequestInfo | URL,
+    init: RequestInit = {},
+  ): Promise<Response> {
+    const hostOrigin = new URL(this.host).origin;
+    let resolvedInput: RequestInfo | URL;
+    let targetOrigin: string;
+
+    if (typeof input === "string") {
+      if (input.startsWith("/") && !input.startsWith("//")) {
+        resolvedInput = `${this.host}${input}`;
+        targetOrigin = hostOrigin;
+      } else {
+        try {
+          const parsed = new URL(input, this.host);
+          resolvedInput = parsed.toString();
+          targetOrigin = parsed.origin;
+        } catch {
+          resolvedInput = input;
+          targetOrigin = "";
+        }
+      }
+    } else if (input instanceof URL) {
+      resolvedInput = input;
+      targetOrigin = input.origin;
+    } else {
+      resolvedInput = input;
+      try {
+        targetOrigin = new URL(input.url).origin;
+      } catch {
+        targetOrigin = "";
+      }
+    }
+
+    const isSameOrigin = targetOrigin === hostOrigin;
 
     const jwt = await this.getValidJwt();
     const executeFetch = (token: string | null): Promise<Response> => {
       const headers = new Headers(init.headers);
-      if (token) {
+      if (token && isSameOrigin) {
         headers.set("Authorization", `Bearer ${token}`);
       }
       return fetch(resolvedInput, {
@@ -250,7 +312,10 @@ export class SimpleJwtLogin {
 
     const response = await executeFetch(jwt);
 
-    if (response.status === 401 && (this.storage.getRefreshToken() || this.storage.getJwt())) {
+    if (
+      response.status === 401 &&
+      (this.storage.getRefreshToken() || this.storage.getJwt())
+    ) {
       const refreshedJwt = await this.getValidJwt(true);
       if (refreshedJwt && refreshedJwt !== jwt) {
         return executeFetch(refreshedJwt);
@@ -278,7 +343,11 @@ export class SimpleJwtLogin {
       params = { ...params, [this.authCodeKey]: effectiveAuthCode };
     }
 
-    const response = await this.call<AuthenticateResponse>("POST", "/auth", params);
+    const response = await this.call<AuthenticateResponse>(
+      "POST",
+      "/auth",
+      params,
+    );
 
     // Auto-store tokens
     if (response.data?.jwt) {
@@ -342,7 +411,11 @@ export class SimpleJwtLogin {
       body[this.authCodeKey] = effectiveAuthCode;
     }
 
-    const response = await this.call<AuthenticateResponse>("POST", "/auth/refresh", body);
+    const response = await this.call<AuthenticateResponse>(
+      "POST",
+      "/auth/refresh",
+      body,
+    );
 
     // Auto-store refreshed tokens
     if (response.data?.jwt) {
@@ -386,6 +459,16 @@ export class SimpleJwtLogin {
    * @param authCode Optional auth code
    */
   public autologin(params: AutologinInterface, authCode = ""): string {
+    if (params.redirectUrl) {
+      const trimmed = params.redirectUrl.trim();
+      const isDangerousProtocol = /^(javascript|data|vbscript):/i.test(trimmed);
+      if (isDangerousProtocol) {
+        throw new Error(
+          "[SimpleJwtLogin] Dangerous protocol detected in redirectUrl parameter.",
+        );
+      }
+    }
+
     const p: Record<string, unknown> = { ...params };
     const effectiveAuthCode = authCode || this.defaultAuthCode;
     if (effectiveAuthCode !== "") {
@@ -503,7 +586,11 @@ export class SimpleJwtLogin {
       } catch (error) {
         // Multi-tab recovery: check if another tab updated storage with a valid JWT
         const latestJwt = this.storage.getJwt();
-        if (latestJwt && latestJwt !== initialJwt && !this.isJwtExpiringSoon(latestJwt)) {
+        if (
+          latestJwt &&
+          latestJwt !== initialJwt &&
+          !this.isJwtExpiringSoon(latestJwt)
+        ) {
           return latestJwt;
         }
 
@@ -562,8 +649,10 @@ export class SimpleJwtLogin {
 
   private queryData(data: Record<string, unknown>): string {
     const searchParams = new URLSearchParams();
-    for (const key in data) {
-      const value = data[key];
+    for (const [key, value] of Object.entries(data)) {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") {
+        continue;
+      }
       if (value !== null && value !== undefined) {
         searchParams.append(key, String(value));
       }
@@ -590,7 +679,8 @@ export class SimpleJwtLogin {
 
     if (method === "GET" && params) {
       const separator = this.useWpJson ? "?" : "&";
-      callUrl = callUrl + separator + this.queryData(params as Record<string, unknown>);
+      callUrl =
+        callUrl + separator + this.queryData(params as Record<string, unknown>);
     } else if (params) {
       fetchOptions.body = JSON.stringify(params);
     }

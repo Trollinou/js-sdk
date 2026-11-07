@@ -128,10 +128,12 @@ This means JWT decoding (for expiry checking) works seamlessly in all environmen
 
 | Environment | Recommended Storage | Reason |
 |-------------|---------------------|--------|
-| **PWA / Client-side SPA** | `LocalStorageTokenStorage` | Tokens persist across page reloads |
+| **PWA / Client-side SPA** | `LocalStorageTokenStorage` | Tokens persist across page reloads (see Security notice) |
 | **SSR / Next.js / Nuxt** | `InMemoryTokenStorage` or `CookieTokenStorage` | No `localStorage` in SSR |
-| **Traditional Web App** | `CookieTokenStorage` | HTTP-only cookies for security |
+| **Traditional Web App (client)** | `CookieTokenStorage` | Browser cookie storage with SameSite & Secure flags |
 | **Node.js Scripts** | `InMemoryTokenStorage` | No browser APIs available |
+
+> **Security Notice**: Client-side storage (`localStorage` and `document.cookie`) is accessible to JavaScript and can be targeted by XSS attacks. For high-security environments, prefer short-lived JWTs in memory (`InMemoryTokenStorage`) and server-managed `HttpOnly` cookies for token refresh.
 
 ---
 
