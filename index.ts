@@ -14,6 +14,7 @@ export type * from "./src/Requests/RegisterUserInterface.js";
 export type * from "./src/Requests/ResetPasswordInterface.js";
 export type * from "./src/Requests/RevokeTokenInterface.js";
 export type * from "./src/Requests/ValidateTokenInterface.js";
+export type * from "./src/Requests/VerifyTwoFactorInterface.js";
 
 // Response interfaces & errors
 export type * from "./src/Responses/AuthenticateResponse.js";

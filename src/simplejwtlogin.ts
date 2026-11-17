@@ -7,6 +7,7 @@ import type { RegisterUserInterface } from "./Requests/RegisterUserInterface.js"
 import type { ResetPasswordInterface } from "./Requests/ResetPasswordInterface.js";
 import type { RevokeTokenInterface } from "./Requests/RevokeTokenInterface.js";
 import type { ValidateTokenInterface } from "./Requests/ValidateTokenInterface.js";
+import type { VerifyTwoFactorInterface } from "./Requests/VerifyTwoFactorInterface.js";
 import type { AuthenticateResponse } from "./Responses/AuthenticateResponse.js";
 import type { RegisterUserResponse } from "./Responses/RegisterUserResponse.js";
 import type { ValidateTokenResponse } from "./Responses/ValidateTokenResponse.js";
@@ -108,6 +109,14 @@ export interface SimpleJwtLoginOptions {
   useWpJson?: boolean;
 }
 
+/**
+ * Simple-JWT-Login JavaScript/TypeScript SDK.
+ *
+ * Requires **Simple-JWT-Login WordPress plugin >= 4.1.1**.
+ * For cross-origin browser apps (SPA/PWA), the app origin must be allowed in
+ * the WordPress plugin's CORS ("Allow origin") settings so `Authorization: Bearer`
+ * headers are accepted under plugin v4.1.1+ CSRF protection.
+ */
 export class SimpleJwtLogin {
   private readonly host: string;
   private readonly namespace: string;
@@ -259,6 +268,10 @@ export class SimpleJwtLogin {
    * If the server responds with `401 Unauthorized`, forces a silent token refresh once
    * and retries the request with the new JWT.
    *
+   * @note Requires WordPress plugin >= 4.1.1: for cross-origin browser requests,
+   * the client origin (or `*` for Bearer header auth) must be configured in the plugin's
+   * CORS ("Allow origin") settings; otherwise the server ignores the `Authorization` header.
+   *
    * @param input Request URL or Request object (relative paths are resolved against `host`)
    * @param init Optional fetch RequestInit options
    */
@@ -349,7 +362,40 @@ export class SimpleJwtLogin {
       params,
     );
 
-    // Auto-store tokens
+    // Auto-store tokens only when authentication is complete (not an interim 2FA challenge JWT)
+    if (response.data?.jwt && !response.data.two_factor_required) {
+      this.storage.setJwt(response.data.jwt);
+      if (response.data.refresh_token) {
+        this.storage.setRefreshToken(response.data.refresh_token);
+      }
+    }
+
+    return response;
+  }
+
+  /**
+   * Complete Two-Factor Authentication (`POST /auth/2fa`) using the interim JWT
+   * returned by `authenticate()` and the user's 2FA code.
+   * Tokens are automatically stored after a successful verification.
+   *
+   * @param params Must contain the interim `JWT` and `code`
+   * @param authCode Optional auth code if required by plugin settings
+   */
+  public async verifyTwoFactor(
+    params: VerifyTwoFactorInterface,
+    authCode = "",
+  ): Promise<AuthenticateResponse> {
+    const effectiveAuthCode = authCode || this.defaultAuthCode;
+    if (effectiveAuthCode !== "") {
+      params = { ...params, [this.authCodeKey]: effectiveAuthCode };
+    }
+
+    const response = await this.call<AuthenticateResponse>(
+      "POST",
+      "/auth/2fa",
+      params,
+    );
+
     if (response.data?.jwt) {
       this.storage.setJwt(response.data.jwt);
       if (response.data.refresh_token) {

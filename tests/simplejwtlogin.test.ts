@@ -631,8 +631,81 @@ describe("SimpleJwtLogin", () => {
     it("should expose ERROR_CODES constants", () => {
       expect(ERROR_CODES.INVALID_CREDENTIALS).toBe(48);
       expect(ERROR_CODES.AUTH_CODE_INVALID).toBe(27);
-      expect(ERROR_CODES.JWT_EXPIRED).toBe(12);
+      expect(ERROR_CODES.JWT_NOT_BEFORE).toBe(12);
+      expect(ERROR_CODES.JWT_EXPIRED).toBe(14);
       expect(ERROR_CODES.REFRESH_TOKEN_NOT_FOUND).toBe(51);
+      expect(ERROR_CODES.PROTECT_ENDPOINTS_MISSING_JWT).toBe(75);
+      expect(ERROR_CODES.PROTECT_ENDPOINTS_INSUFFICIENT_ROLE).toBe(114);
+      expect(ERROR_CODES.USER_ALREADY_EXISTS).toBe(38);
+      expect(ERROR_CODES.REGISTRATION_DISABLED).toBe(31);
+      expect(ERROR_CODES.TWO_FACTOR_INVALID_CODE).toBe(109);
+      expect(ERROR_CODES.TWO_FACTOR_INTERIM_JWT_REJECTED).toBe(110);
+    });
+
+    it("should NOT store interim JWT when authenticate returns two_factor_required", async () => {
+      const mockChallengeResponse = {
+        success: true,
+        data: {
+          jwt: "interim-2fa-jwt",
+          two_factor_required: true,
+          provider: "Two_Factor_Totp",
+        },
+      };
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(JSON.stringify(mockChallengeResponse)),
+      });
+
+      const result = await sdk.authenticate({
+        login: "user@example.com",
+        password: "pass",
+      });
+
+      expect(result).toEqual(mockChallengeResponse);
+      expect(sdk.getJwt()).toBeNull();
+      expect(sdk.getRefreshToken()).toBeNull();
+      expect(sdk.isAuthenticated()).toBe(false);
+    });
+
+    it("verifyTwoFactor should POST to /auth/2fa and store final tokens", async () => {
+      const mockVerifiedResponse = {
+        success: true,
+        data: {
+          jwt: "final-jwt",
+          refresh_token: "final-refresh",
+        },
+      };
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        text: jest
+          .fn()
+          .mockResolvedValueOnce(JSON.stringify(mockVerifiedResponse)),
+      });
+
+      const result = await sdk.verifyTwoFactor(
+        {
+          JWT: "interim-2fa-jwt",
+          code: "123456",
+        },
+        "auth-2fa",
+      );
+
+      expect(result).toEqual(mockVerifiedResponse);
+      expect(sdk.getJwt()).toBe("final-jwt");
+      expect(sdk.getRefreshToken()).toBe("final-refresh");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "http://example.com/?rest_route=/simple-jwt-login/v1/auth/2fa",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            JWT: "interim-2fa-jwt",
+            code: "123456",
+            AUTH_KEY: "auth-2fa",
+          }),
+        }),
+      );
     });
 
     it("should use refresh_token parameter as per plugin v4 API", async () => {

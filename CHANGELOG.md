@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-17
+
+### Added
+
+- **WordPress Plugin >= 4.1.1 Prerequisite**: Documented minimum required plugin version (`>= 4.1.1`) and mandatory cross-origin CORS ("Allow origin") configuration introduced by plugin v4.1.1 anti-CSRF enforcement
+- **2FA Support**: Added `verifyTwoFactor()` (`POST /auth/2fa`) and `VerifyTwoFactorInterface`, plus `two_factor_required` and `provider` fields on `AuthenticateResponse`
+- **Error Codes**: Added new plugin v4.0–v4.1.1 constants to `ERROR_CODES` (Protect Endpoints `75`/`114`, 2FA `105`–`110`, OAuth, API Keys, Revoked Tokens, Registration, AI Abilities `120`–`128`)
+
+### Fixed
+
+- **2FA Interim JWT Handling**: `authenticate()` no longer stores the interim challenge JWT in `tokenStorage` when `response.data.two_factor_required` is `true`
+- **Error Codes Alignment**: Fixed misaligned `ERROR_CODES` values against WordPress plugin `ErrorCodes.php` (`JWT_EXPIRED`: `14`, `JWT_NOT_BEFORE`: `12`, `USER_NOT_FOUND`: `24`, `USER_ALREADY_EXISTS`: `38`, `REGISTRATION_DISABLED`: `31`, `REGISTRATION_MISSING_FIELDS`: `35`)
+
 ## [1.1.4] - 2026-11-07
 
 ### Security

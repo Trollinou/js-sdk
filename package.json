@@ -1,8 +1,8 @@
 {
   "name": "simple-jwt-login",
-  "version": "1.1.5",
+  "version": "1.2.0",
   "type": "module",
-  "description": "Simple-JWT-Login JavaScript SDK — compatible with plugin v4.x, with silent token refresh",
+  "description": "Simple-JWT-Login JavaScript SDK — requires WordPress plugin >= 4.1.1, with silent token refresh and 2FA support",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",

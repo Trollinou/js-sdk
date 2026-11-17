@@ -3,20 +3,21 @@
 </p>
 <p align="center">
    <img src="https://img.shields.io/npm/dt/simple-jwt-login" alt="npm downloads" />
-   <img src="https://img.shields.io/badge/plugin-v4.x-blue" alt="Plugin compatibility" />
-   <img src="https://img.shields.io/badge/version-1.1.1-green" alt="SDK version" />
+   <img src="https://img.shields.io/badge/plugin-%3E%3D4.1.1-blue" alt="Plugin compatibility" />
+   <img src="https://img.shields.io/badge/version-1.2.0-green" alt="SDK version" />
 </p>
 
 # Simple-JWT-Login SDK
 
 JavaScript/TypeScript SDK for the [**Simple-JWT-Login**](https://wordpress.org/plugins/simple-jwt-login/) WordPress plugin.
 
-Compatible with **plugin v4.x** — includes **silent token refresh** for PWA/SPA use cases.
+Requires **Simple-JWT-Login WordPress plugin >= 4.1.1** — includes **silent token refresh** and **2FA support** for PWA/SPA use cases.
 
 ---
 
 ## Table of Contents
 
+- [Prerequisites (WordPress Plugin >= 4.1.1)](#prerequisites-wordpress-plugin--411)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
@@ -27,6 +28,16 @@ Compatible with **plugin v4.x** — includes **silent token refresh** for PWA/SP
 - [Response Types (v4)](#response-types-v4)
 - [Migration from v0.x](#migration-from-v0x)
 - [Changelog](#changelog)
+
+---
+
+## Prerequisites (WordPress Plugin >= 4.1.1)
+
+- **Minimum WordPress Plugin Version**: **Simple-JWT-Login `>= 4.1.1`**
+- **Mandatory Cross-Origin CORS Configuration (v4.1.1+)**:
+  To prevent CSRF attacks, plugin v4.1.1 ignores JWTs sent via `Authorization: Bearer`, cookies, or PHP session on cross-site requests (including sibling subdomains and different local ports such as `localhost:3000` -> `localhost:8080`) unless the app's origin is explicitly allowed in **Simple JWT Login -> CORS -> Allow Origin** on WordPress (even if CORS headers are already configured in Nginx or Apache).
+  - Use an explicit origin (or comma-separated list of origins) when using cookie/session authentication.
+  - Using `*` in **Allow Origin** only trusts the `Authorization: Bearer` header, never cookies or sessions.
 
 ---
 
@@ -257,7 +268,7 @@ try {
       // Handle invalid credentials (error_code: 48)
       console.log("Please check your email and password");
     } else if (error.isErrorCode(ERROR_CODES.JWT_EXPIRED)) {
-      // Handle expired JWT (error_code: 12)
+      // Handle expired JWT (error_code: 14)
       console.log("Your session has expired, please log in again");
     } else if (error.isErrorCode(ERROR_CODES.AUTH_CODE_INVALID)) {
       // Handle invalid auth code (error_code: 27)
@@ -274,19 +285,26 @@ try {
 }
 ```
 
-**Available error codes (from `ERROR_CODES`):**
+**Available error codes (from `ERROR_CODES`, aligned with plugin `>= 4.1.1`):**
 
 | Code | Constant | Description |
 |------|---------|-------------|
 | 48 | `INVALID_CREDENTIALS` | Email/username or password is incorrect |
 | 27 | `AUTH_CODE_INVALID` | The provided auth code is wrong |
-| 12 | `JWT_EXPIRED` | JWT has expired |
+| 14 | `JWT_EXPIRED` | JWT has expired |
+| 12 | `JWT_NOT_BEFORE` | JWT is not active yet (`nbf` claim) |
 | 11 | `JWT_SIGNATURE_INVALID` | JWT signature verification failed |
 | 55 | `JWT_REVOKED` | JWT has been revoked |
 | 51 | `REFRESH_TOKEN_NOT_FOUND` | Refresh token not found/expired |
 | 45 | `AUTH_DISABLED` | Authentication is disabled in plugin settings |
 | 41 | `IP_NOT_ALLOWED` | Client IP not on allow-list |
 | 53 | `JWT_MISSING` | JWT is missing from request |
+| 75 | `PROTECT_ENDPOINTS_MISSING_JWT` | Protected REST endpoint accessed without valid auth |
+| 114 | `PROTECT_ENDPOINTS_INSUFFICIENT_ROLE` | User lacks required role for protected endpoint |
+| 109 | `TWO_FACTOR_INVALID_CODE` | Submitted 2FA code is missing or invalid |
+| 110 | `TWO_FACTOR_INTERIM_JWT_REJECTED` | Interim 2FA JWT rejected on normal endpoints |
+| 31 | `REGISTRATION_DISABLED` | User registration is disabled |
+| 38 | `USER_ALREADY_EXISTS` | User already exists during registration |
 | 81 | `REFRESH_TOKEN_DISABLED` | Refresh token feature is disabled |
 | 82 | `VALIDATION_DISABLED` | JWT validation is disabled |
 | 83 | `REVOCATION_DISABLED` | Token revocation is disabled |
@@ -308,8 +326,29 @@ const response = await sdk.authenticate({
   payload: { app: "my-pwa" }, // optional: extra claims merged into JWT
 }, "optional-auth-code");
 
-// response.data.jwt         → JWT token
-// response.data.refresh_token → refresh token (plugin v4+)
+// response.data.jwt                  → JWT token (or interim 2FA token if two_factor_required is true)
+// response.data.refresh_token        → refresh token (plugin v4+, omitted on 2FA challenge)
+// response.data.two_factor_required  → true when 2FA verification is needed
+// response.data.provider             → active 2FA provider class name
+```
+
+### `verifyTwoFactor(params, authCode?)`
+
+Complete Two-Factor Authentication (`POST /auth/2fa`) using the interim JWT returned by `authenticate()` and the user's 2FA code. Tokens are stored automatically on success.
+
+```typescript
+const authResponse = await sdk.authenticate({
+  login: "user@example.com",
+  password: "secret",
+});
+
+if (authResponse.data.two_factor_required) {
+  const verified = await sdk.verifyTwoFactor({
+    JWT: authResponse.data.jwt,
+    code: "123456", // TOTP, email token, or backup code
+  });
+  // verified.data.jwt & verified.data.refresh_token are now stored
+}
 ```
 
 ### `autologin(params, authCode?)`
@@ -376,6 +415,8 @@ const response = await sdk.registerUser({
 
 const userId = response.data?.id; // v4
 ```
+
+> **Note (plugin v4.1.0+):** Meta keys ending in `capabilities`, `user_level`, or `session_tokens` are always ignored on registration by the server, even if listed in *Allowed user meta*.
 
 ### `deleteUser(params, authCode?)`
 
@@ -472,6 +513,12 @@ const { jwt, refresh_token } = response.data;
 ---
 
 ## Changelog
+
+### v1.2.0
+- **Prerequisite**: Requires Simple-JWT-Login WordPress plugin `>= 4.1.1` (documents mandatory CORS "Allow origin" configuration for cross-origin apps)
+- **New**: Added `verifyTwoFactor()` (`POST /auth/2fa`), `VerifyTwoFactorInterface`, and 2FA fields (`two_factor_required`, `provider`) on `AuthenticateResponse`
+- **Fix**: `authenticate()` no longer stores interim 2FA challenge JWTs when `two_factor_required` is `true`
+- **Fix**: Aligned `ERROR_CODES` with WordPress plugin `>= 4.1.1` (`JWT_EXPIRED: 14`, `USER_ALREADY_EXISTS: 38`, `REGISTRATION_DISABLED: 31`, etc.) and added Protect Endpoints (`75`, `114`), 2FA, OAuth, API Keys, and AI Abilities error codes
 
 ### v1.1.1
 - **Fix**: ESM compatibility (`ReferenceError: exports is not defined in ES module scope`) for Vite/Vitest/ESM bundlers
