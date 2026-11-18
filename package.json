@@ -21,7 +21,7 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "typecheck": "tsc --noEmit",
-    "clean": "node -e 'fs.rmSync(\"dist\", { recursive: true, force: true })'",
+    "clean": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc",
     "publish": "npm publish",
     "prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build",
