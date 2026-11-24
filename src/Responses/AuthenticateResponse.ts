@@ -1,6 +1,6 @@
 /**
  * Response returned by the authenticate endpoints (`POST /auth` and `POST /auth/2fa`).
- * Requires Simple-JWT-Login WordPress plugin >= 4.1.1.
+ * Requires Simple-JWT-Login WordPress plugin >= 4.1.1 (aligned with 4.2.1).
  */
 export interface AuthenticateResponse {
   success: boolean;

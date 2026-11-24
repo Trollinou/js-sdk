@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-24
+
+### Added
+
+- **Error Codes (`4.2.1` alignment)**: Added WordPress plugin `4.2.0`/`4.2.1` constants to `ERROR_CODES`: `JWT_USER_PROPERTY_NOT_FOUND` (`29`), `JWT_USER_PARAMETER_NOT_FOUND` (`30`), `CHANGE_PASSWORD_MISSING_CODE` (`60`), `OAUTH_INVALID_STATE` (`129`), `JWT_AUDIENCE_MISMATCH` (`130`), `REFRESH_TOKEN_STORE_FAILED` (`131`), `API_KEY_INVALID_EXPIRY` (`132`), and `TWO_FACTOR_NONCE_CREATE_FAILED` (`133`)
+
+### Changed
+
+- **Documentation & JSDoc (`4.2.0`/`4.2.1` alignment)**: Updated `README.md`, `CHANGELOG.md`, `AuthenticateResponse`, and `SimpleJwtLogin` JSDoc with WordPress `>= 6.2` requirement for plugin `>= 4.2.0`, real HTTP status codes (`401`/`403`/`404`/`422`/`429`), anti-enumeration HTTP `200` behavior on `resetPassword()`, single-use 2FA nonces and refresh tokens, `wp_authenticate()` / reserved `aud` claims on `authenticate()`, and password-change session revocation on `changePassword()`
+
 ## [1.2.0] - 2026-11-17
 
 ### Added

@@ -16,7 +16,7 @@ export interface SimpleJwtLoginErrorResponse {
 }
 
 /**
- * Known error codes from the Simple-JWT-Login WordPress plugin (>= 4.1.1).
+ * Known error codes from the Simple-JWT-Login WordPress plugin (>= 4.1.1, aligned with 4.2.1).
  * @see https://github.com/nicumicle/simple-jwt-login/blob/master/simple-jwt-login/src/ErrorCodes.php
  */
 export const ERROR_CODES = {
@@ -26,9 +26,12 @@ export const ERROR_CODES = {
   JWT_NOT_YET_VALID: 13,
   JWT_EXPIRED: 14,
   JWT_IS_MISSING: 23,
+  JWT_USER_PROPERTY_NOT_FOUND: 29,
+  JWT_USER_PARAMETER_NOT_FOUND: 30,
   JWT_REVOKED: 55,
   JWT_STRUCTURAL_ERROR: 53,
   JWT_MISSING: 53,
+  JWT_AUDIENCE_MISMATCH: 130,
 
   // Authentication errors
   INVALID_CREDENTIALS: 48,
@@ -41,7 +44,12 @@ export const ERROR_CODES = {
   // User-related errors
   USER_NOT_FOUND: 24,
   JWT_USER_NOT_FOUND: 54,
+  /**
+   * Since plugin v4.2.0, `POST /user/reset_password` returns HTTP 200 for unknown emails
+   * (anti-enumeration); code `64` applies to `PUT /user/reset_password` or plugins `< 4.2.0`.
+   */
   RESET_PASSWORD_USER_NOT_FOUND: 64,
+  CHANGE_PASSWORD_MISSING_CODE: 60,
   USER_ALREADY_EXISTS: 38,
   EMAIL_INVALID: 36,
   EMAIL_DOMAIN_NOT_ALLOWED: 37,
@@ -51,6 +59,7 @@ export const ERROR_CODES = {
   REFRESH_TOKEN_TOO_OLD: 50,
   REFRESH_TOKEN_NOT_FOUND: 51,
   REFRESH_TOKEN_DISABLED: 81,
+  REFRESH_TOKEN_STORE_FAILED: 131,
 
   // Validation errors
   VALIDATION_DISABLED: 82,
@@ -74,12 +83,14 @@ export const ERROR_CODES = {
   TWO_FACTOR_RATE_LIMITED: 108,
   TWO_FACTOR_INVALID_CODE: 109,
   TWO_FACTOR_INTERIM_JWT_REJECTED: 110,
+  TWO_FACTOR_NONCE_CREATE_FAILED: 133,
   /** @deprecated Use `TWO_FACTOR_INTERIM_JWT_REJECTED` (or `106`–`110`) instead */
   TWO_FACTOR_REQUIRED: 110,
 
   // OAuth errors
   OAUTH_INVALID_PROVIDER: 69,
   OAUTH_PROVIDER_NOT_ACTIVE: 70,
+  OAUTH_INVALID_STATE: 129,
   GOOGLE_MISSING_PARAM: 71,
   GOOGLE_INVALID_CODE: 72,
   GOOGLE_INVALID_ID_TOKEN: 73,
@@ -111,6 +122,7 @@ export const ERROR_CODES = {
   API_KEY_UPDATE_FAILED: 90,
   API_KEY_REVOKE_FAILED: 91,
   API_KEY_DELETE_FAILED: 92,
+  API_KEY_INVALID_EXPIRY: 132,
 
   // AI Abilities errors (v4.1.0+)
   ABILITY_UNKNOWN_SECTION: 120,
@@ -133,7 +145,8 @@ export const ERROR_CODES = {
 /**
  * Type for known error codes.
  */
-export type SimpleJwtLoginErrorCode = typeof ERROR_CODES[keyof typeof ERROR_CODES];
+export type SimpleJwtLoginErrorCode =
+  (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 
 /**
  * API error thrown by SimpleJwtLogin methods.
@@ -142,10 +155,10 @@ export type SimpleJwtLoginErrorCode = typeof ERROR_CODES[keyof typeof ERROR_CODE
 export class SimpleJwtLoginApiError extends Error {
   /** HTTP status code (e.g., 401, 403, 422) */
   public readonly status: number;
-  
+
   /** Plugin-specific error code (e.g., 48 for invalid credentials) */
   public readonly errorCode: number | undefined;
-  
+
   /** Raw response data from the plugin */
   public readonly responseData: unknown;
 
@@ -163,7 +176,7 @@ export class SimpleJwtLoginApiError extends Error {
     responseData: unknown = null,
   ) {
     super(message);
-    this.name = 'SimpleJwtLoginApiError';
+    this.name = "SimpleJwtLoginApiError";
     this.status = status;
     this.errorCode = errorCode;
     this.responseData = responseData;

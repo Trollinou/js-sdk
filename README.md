@@ -4,14 +4,14 @@
 <p align="center">
    <img src="https://img.shields.io/npm/dt/simple-jwt-login" alt="npm downloads" />
    <img src="https://img.shields.io/badge/plugin-%3E%3D4.1.1-blue" alt="Plugin compatibility" />
-   <img src="https://img.shields.io/badge/version-1.2.0-green" alt="SDK version" />
+   <img src="https://img.shields.io/badge/version-1.2.1-green" alt="SDK version" />
 </p>
 
 # Simple-JWT-Login SDK
 
 JavaScript/TypeScript SDK for the [**Simple-JWT-Login**](https://wordpress.org/plugins/simple-jwt-login/) WordPress plugin.
 
-Requires **Simple-JWT-Login WordPress plugin >= 4.1.1** — includes **silent token refresh** and **2FA support** for PWA/SPA use cases.
+Requires **Simple-JWT-Login WordPress plugin >= 4.1.1** (aligned with `4.2.1`) — includes **silent token refresh** and **2FA support** for PWA/SPA use cases.
 
 ---
 
@@ -33,7 +33,7 @@ Requires **Simple-JWT-Login WordPress plugin >= 4.1.1** — includes **silent to
 
 ## Prerequisites (WordPress Plugin >= 4.1.1)
 
-- **Minimum WordPress Plugin Version**: **Simple-JWT-Login `>= 4.1.1`**
+- **Minimum WordPress Plugin Version**: **Simple-JWT-Login `>= 4.1.1`** (SDK aligned with plugin **`4.2.1`**; plugin `>= 4.2.0` requires **WordPress `>= 6.2`**)
 - **Mandatory Cross-Origin CORS Configuration (v4.1.1+)**:
   To prevent CSRF attacks, plugin v4.1.1 ignores JWTs sent via `Authorization: Bearer`, cookies, or PHP session on cross-site requests (including sibling subdomains and different local ports such as `localhost:3000` -> `localhost:8080`) unless the app's origin is explicitly allowed in **Simple JWT Login -> CORS -> Allow Origin** on WordPress (even if CORS headers are already configured in Nginx or Apache).
   - Use an explicit origin (or comma-separated list of origins) when using cookie/session authentication.
@@ -285,7 +285,7 @@ try {
 }
 ```
 
-**Available error codes (from `ERROR_CODES`, aligned with plugin `>= 4.1.1`):**
+**Available error codes (from `ERROR_CODES`, aligned with plugin `4.2.1`):**
 
 | Code | Constant | Description |
 |------|---------|-------------|
@@ -295,14 +295,19 @@ try {
 | 12 | `JWT_NOT_BEFORE` | JWT is not active yet (`nbf` claim) |
 | 11 | `JWT_SIGNATURE_INVALID` | JWT signature verification failed |
 | 55 | `JWT_REVOKED` | JWT has been revoked |
+| 130 | `JWT_AUDIENCE_MISMATCH` | JWT `aud` claim does not match expected audience (HTTP `401`) |
 | 51 | `REFRESH_TOKEN_NOT_FOUND` | Refresh token not found/expired |
+| 131 | `REFRESH_TOKEN_STORE_FAILED` | Failed to save new refresh token in DB (HTTP `500`) |
 | 45 | `AUTH_DISABLED` | Authentication is disabled in plugin settings |
 | 41 | `IP_NOT_ALLOWED` | Client IP not on allow-list |
 | 53 | `JWT_MISSING` | JWT is missing from request |
 | 75 | `PROTECT_ENDPOINTS_MISSING_JWT` | Protected REST endpoint accessed without valid auth |
 | 114 | `PROTECT_ENDPOINTS_INSUFFICIENT_ROLE` | User lacks required role for protected endpoint |
-| 109 | `TWO_FACTOR_INVALID_CODE` | Submitted 2FA code is missing or invalid |
-| 110 | `TWO_FACTOR_INTERIM_JWT_REJECTED` | Interim 2FA JWT rejected on normal endpoints |
+| 108 | `TWO_FACTOR_RATE_LIMITED` | Too many 2FA attempts, rate limited (HTTP `429`) |
+| 109 | `TWO_FACTOR_INVALID_CODE` | Submitted 2FA code is missing or invalid (HTTP `401`) |
+| 110 | `TWO_FACTOR_INTERIM_JWT_REJECTED` | Interim 2FA JWT rejected on normal endpoints (HTTP `401`) |
+| 133 | `TWO_FACTOR_NONCE_CREATE_FAILED` | Failed to persist 2FA session nonce (HTTP `500`) |
+| 60 | `CHANGE_PASSWORD_MISSING_CODE` | Missing reset code on `PUT /user/reset_password` (HTTP `422`) |
 | 31 | `REGISTRATION_DISABLED` | User registration is disabled |
 | 38 | `USER_ALREADY_EXISTS` | User already exists during registration |
 | 81 | `REFRESH_TOKEN_DISABLED` | Refresh token feature is disabled |
@@ -332,6 +337,8 @@ const response = await sdk.authenticate({
 // response.data.provider             → active 2FA provider class name
 ```
 
+> **Note (plugin v4.2.0+):** `/auth` validates credentials via `wp_authenticate()` (blocking WordPress Application Passwords and honoring brute-force protection plugins) and prevents overriding reserved `aud` and JWT Rule claims via `payload`.
+
 ### `verifyTwoFactor(params, authCode?)`
 
 Complete Two-Factor Authentication (`POST /auth/2fa`) using the interim JWT returned by `authenticate()` and the user's 2FA code. Tokens are stored automatically on success.
@@ -350,6 +357,8 @@ if (authResponse.data.two_factor_required) {
   // verified.data.jwt & verified.data.refresh_token are now stored
 }
 ```
+
+> **Note (plugin v4.2.0+):** The 2FA nonce is single-use, invalid/expired 2FA errors return HTTP `401` (`106`, `107`, `109`), rate limiting returns HTTP `429` (`108`), and exceeding the failed-attempt limit resets the user's WordPress password.
 
 ### `autologin(params, authCode?)`
 
@@ -385,6 +394,8 @@ const response = await sdk.refreshToken({ JWT: "current-jwt" });
 // response.data.jwt          → new JWT
 // response.data.refresh_token → new refresh token
 ```
+
+> **Note (plugin v4.2.0+):** Refresh tokens are single-use with atomic rotation — parallel calls with the same token fail with HTTP `401` (`error_code: 51`). Prefer `getValidJwt()` / `fetchWithAuth()` for automatic request deduplication.
 
 ### `revokeToken(params, authCode?)`
 
@@ -434,6 +445,8 @@ Send a password reset email to the given address.
 await sdk.resetPassword({ email: "user@example.com" });
 ```
 
+> **Note (plugin v4.2.0+):** To prevent user enumeration, `POST /user/reset_password` returns HTTP `200` (`{ success: true, data: { message } }`) even when the email does not match any account (instead of `404` / `error_code: 64`).
+
 ### `changePassword(params, authCode?)`
 
 Set a new password using the code received by email, or a valid JWT.
@@ -445,6 +458,8 @@ await sdk.changePassword({
   code: "reset-code-from-email", // or: JWT: "valid-jwt"
 });
 ```
+
+> **Note (plugin v4.2.0+):** If "Revoke sessions on password change" is enabled on WordPress, existing JWTs and refresh tokens for that user are revoked server-side (call `sdk.clearTokens()` or re-authenticate).
 
 ---
 
@@ -513,6 +528,9 @@ const { jwt, refresh_token } = response.data;
 ---
 
 ## Changelog
+
+### v1.2.1
+- **Alignment (`4.2.1`)**: Added WordPress plugin `4.2.0`/`4.2.1` constants to `ERROR_CODES` (`29`, `30`, `60`, `129`–`133`), documented WordPress `>= 6.2` requirement for plugin `>= 4.2.0`, real HTTP status codes (`401`/`429`/`500`), anti-enumeration HTTP `200` on `resetPassword()`, single-use 2FA nonces and refresh tokens, `wp_authenticate()` / reserved `aud` claims on `authenticate()`, and password-change session revocation on `changePassword()`
 
 ### v1.2.0
 - **Prerequisite**: Requires Simple-JWT-Login WordPress plugin `>= 4.1.1` (documents mandatory CORS "Allow origin" configuration for cross-origin apps)

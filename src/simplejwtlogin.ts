@@ -112,7 +112,7 @@ export interface SimpleJwtLoginOptions {
 /**
  * Simple-JWT-Login JavaScript/TypeScript SDK.
  *
- * Requires **Simple-JWT-Login WordPress plugin >= 4.1.1**.
+ * Requires **Simple-JWT-Login WordPress plugin >= 4.1.1** (aligned with 4.2.1).
  * For cross-origin browser apps (SPA/PWA), the app origin must be allowed in
  * the WordPress plugin's CORS ("Allow origin") settings so `Authorization: Bearer`
  * headers are accepted under plugin v4.1.1+ CSRF protection.
@@ -344,6 +344,10 @@ export class SimpleJwtLogin {
    * Authenticate with WordPress credentials and get a JWT.
    * Tokens are automatically stored after a successful authentication.
    *
+   * @note Since plugin v4.2.0, `/auth` validates credentials via `wp_authenticate()`
+   * (blocking WordPress Application Passwords and honoring brute-force protection plugins)
+   * and prevents overriding reserved `aud` and JWT Rule claims via `payload`.
+   *
    * @param params Credentials (`email`/`username`/`login` + `password`)
    * @param authCode Optional auth code if required by plugin settings
    */
@@ -377,6 +381,11 @@ export class SimpleJwtLogin {
    * Complete Two-Factor Authentication (`POST /auth/2fa`) using the interim JWT
    * returned by `authenticate()` and the user's 2FA code.
    * Tokens are automatically stored after a successful verification.
+   *
+   * @note Since plugin v4.2.0, the 2FA nonce is single-use, invalid/expired 2FA errors
+   * return HTTP `401` (`106`, `107`, `109`), rate limiting returns HTTP `429` (`108`),
+   * nonce creation failures return HTTP `500` (`133`), and exceeding failed attempts
+   * resets the user's WordPress password.
    *
    * @param params Must contain the interim `JWT` and `code`
    * @param authCode Optional auth code if required by plugin settings
@@ -565,6 +574,10 @@ export class SimpleJwtLogin {
   /**
    * Request a password reset email for the given email address.
    *
+   * @note Since plugin v4.2.0, `POST /user/reset_password` returns HTTP `200`
+   * (`{ success: true, data: { message } }`) for unknown emails to prevent user
+   * enumeration instead of `404` / `error_code: 64`.
+   *
    * @param params Must contain an `email` field
    * @param authCode Optional auth code
    */
@@ -581,6 +594,10 @@ export class SimpleJwtLogin {
 
   /**
    * Change the user password using the reset code received by email.
+   *
+   * @note When plugin v4.2.0+ "Revoke sessions on password change" is enabled,
+   * existing JWTs and refresh tokens for that user are revoked server-side
+   * (call `clearTokens()` or re-authenticate).
    *
    * @param params Must contain `email`, `new_password`, and either `code` or `JWT`
    * @param authCode Optional auth code

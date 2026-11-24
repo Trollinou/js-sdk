@@ -183,14 +183,12 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest
-          .fn()
-          .mockResolvedValueOnce(
-            JSON.stringify({
-              success: true,
-              data: { jwt: freshJwt, refresh_token: "new-refresh" },
-            }),
-          ),
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: true,
+            data: { jwt: freshJwt, refresh_token: "new-refresh" },
+          }),
+        ),
       });
 
       const result = await sdk.getValidJwt();
@@ -256,15 +254,13 @@ describe("SimpleJwtLogin", () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 401,
-        text: jest
-          .fn()
-          .mockResolvedValueOnce(
-            JSON.stringify({
-              success: false,
-              error_code: 51,
-              data: { message: "Refresh token expired" },
-            }),
-          ),
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: false,
+            error_code: 51,
+            data: { message: "Refresh token expired" },
+          }),
+        ),
       });
 
       const result = await s.getValidJwt();
@@ -307,14 +303,12 @@ describe("SimpleJwtLogin", () => {
       // 3. Connectivity returns -> refresh succeeds seamlessly without re-login!
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest
-          .fn()
-          .mockResolvedValueOnce(
-            JSON.stringify({
-              success: true,
-              data: { jwt: "recovered-jwt", refresh_token: "rotated-refresh" },
-            }),
-          ),
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: true,
+            data: { jwt: "recovered-jwt", refresh_token: "rotated-refresh" },
+          }),
+        ),
       });
       const recoveredResult = await s.getValidJwt();
       expect(recoveredResult).toBe("recovered-jwt");
@@ -547,14 +541,12 @@ describe("SimpleJwtLogin", () => {
 
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest
-          .fn()
-          .mockResolvedValueOnce(
-            JSON.stringify({
-              success: true,
-              data: { jwt: "refreshed-jwt", refresh_token: "new-refresh" },
-            }),
-          ),
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: true,
+            data: { jwt: "refreshed-jwt", refresh_token: "new-refresh" },
+          }),
+        ),
       });
 
       await s.getValidJwt();
@@ -598,15 +590,13 @@ describe("SimpleJwtLogin", () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
         status: 401,
-        text: jest
-          .fn()
-          .mockResolvedValueOnce(
-            JSON.stringify({
-              success: false,
-              error_code: 48,
-              data: { message: "Invalid credentials" },
-            }),
-          ),
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: false,
+            error_code: 48,
+            data: { message: "Invalid credentials" },
+          }),
+        ),
       });
 
       try {
@@ -633,13 +623,143 @@ describe("SimpleJwtLogin", () => {
       expect(ERROR_CODES.AUTH_CODE_INVALID).toBe(27);
       expect(ERROR_CODES.JWT_NOT_BEFORE).toBe(12);
       expect(ERROR_CODES.JWT_EXPIRED).toBe(14);
+      expect(ERROR_CODES.JWT_USER_PROPERTY_NOT_FOUND).toBe(29);
+      expect(ERROR_CODES.JWT_USER_PARAMETER_NOT_FOUND).toBe(30);
+      expect(ERROR_CODES.CHANGE_PASSWORD_MISSING_CODE).toBe(60);
       expect(ERROR_CODES.REFRESH_TOKEN_NOT_FOUND).toBe(51);
       expect(ERROR_CODES.PROTECT_ENDPOINTS_MISSING_JWT).toBe(75);
       expect(ERROR_CODES.PROTECT_ENDPOINTS_INSUFFICIENT_ROLE).toBe(114);
       expect(ERROR_CODES.USER_ALREADY_EXISTS).toBe(38);
       expect(ERROR_CODES.REGISTRATION_DISABLED).toBe(31);
+      expect(ERROR_CODES.TWO_FACTOR_RATE_LIMITED).toBe(108);
       expect(ERROR_CODES.TWO_FACTOR_INVALID_CODE).toBe(109);
       expect(ERROR_CODES.TWO_FACTOR_INTERIM_JWT_REJECTED).toBe(110);
+      expect(ERROR_CODES.OAUTH_INVALID_STATE).toBe(129);
+      expect(ERROR_CODES.JWT_AUDIENCE_MISMATCH).toBe(130);
+      expect(ERROR_CODES.REFRESH_TOKEN_STORE_FAILED).toBe(131);
+      expect(ERROR_CODES.API_KEY_INVALID_EXPIRY).toBe(132);
+      expect(ERROR_CODES.TWO_FACTOR_NONCE_CREATE_FAILED).toBe(133);
+    });
+
+    it("verifyTwoFactor should surface 429 rate limit and 401 invalid code errors (plugin 4.2.0+)", async () => {
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: false,
+            error_code: 108,
+            data: { message: "Too many two-factor attempts." },
+          }),
+        ),
+      });
+
+      try {
+        await sdk.verifyTwoFactor({ JWT: "interim", code: "000000" });
+        fail("Should have thrown an error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SimpleJwtLoginApiError);
+        const apiError = error as SimpleJwtLoginApiError;
+        expect(apiError.status).toBe(429);
+        expect(apiError.isErrorCode(ERROR_CODES.TWO_FACTOR_RATE_LIMITED)).toBe(
+          true,
+        );
+      }
+
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: false,
+            error_code: 109,
+            data: { message: "Invalid two-factor code." },
+          }),
+        ),
+      });
+
+      try {
+        await sdk.verifyTwoFactor({ JWT: "interim", code: "999999" });
+        fail("Should have thrown an error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SimpleJwtLoginApiError);
+        const apiError = error as SimpleJwtLoginApiError;
+        expect(apiError.status).toBe(401);
+        expect(apiError.isErrorCode(ERROR_CODES.TWO_FACTOR_INVALID_CODE)).toBe(
+          true,
+        );
+      }
+    });
+
+    it("getValidJwt preserves tokens on 500 REFRESH_TOKEN_STORE_FAILED and clears on 401 JWT_REVOKED / JWT_AUDIENCE_MISMATCH", async () => {
+      const onSessionExpired = jest.fn();
+      const s = new SimpleJwtLogin(host, { onSessionExpired });
+      s.setTokens(buildJwt(-10), "refresh-tok");
+
+      // 1. HTTP 500 / error_code 131 preserves tokens and does not trigger onSessionExpired
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: false,
+            error_code: ERROR_CODES.REFRESH_TOKEN_STORE_FAILED,
+            data: { message: "Unable to save the refresh token." },
+          }),
+        ),
+      });
+
+      const storeErrorResult = await s.getValidJwt();
+      expect(storeErrorResult).toBeNull();
+      expect(s.getRefreshToken()).toBe("refresh-tok");
+      expect(onSessionExpired).not.toHaveBeenCalled();
+
+      // 2. HTTP 401 / error_code 55 (e.g. password-change revocation) clears tokens
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: false,
+            error_code: ERROR_CODES.JWT_REVOKED,
+            data: { message: "Refresh token has been revoked." },
+          }),
+        ),
+      });
+
+      const revokedResult = await s.getValidJwt();
+      expect(revokedResult).toBeNull();
+      expect(s.getJwt()).toBeNull();
+      expect(s.getRefreshToken()).toBeNull();
+      expect(onSessionExpired).toHaveBeenCalledTimes(1);
+      expect(
+        onSessionExpired.mock.calls[0][0].isErrorCode(ERROR_CODES.JWT_REVOKED),
+      ).toBe(true);
+
+      // 3. HTTP 401 / error_code 130 (JWT_AUDIENCE_MISMATCH) clears tokens
+      s.setTokens(buildJwt(-10), "refresh-tok-2");
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: false,
+            error_code: ERROR_CODES.JWT_AUDIENCE_MISMATCH,
+            data: { message: "JWT audience mismatch." },
+          }),
+        ),
+      });
+
+      const audienceResult = await s.getValidJwt();
+      expect(audienceResult).toBeNull();
+      expect(s.getJwt()).toBeNull();
+      expect(s.getRefreshToken()).toBeNull();
+      expect(onSessionExpired).toHaveBeenCalledTimes(2);
+      expect(
+        onSessionExpired.mock.calls[1][0].isErrorCode(
+          ERROR_CODES.JWT_AUDIENCE_MISMATCH,
+        ),
+      ).toBe(true);
     });
 
     it("should NOT store interim JWT when authenticate returns two_factor_required", async () => {
@@ -711,14 +831,12 @@ describe("SimpleJwtLogin", () => {
     it("should use refresh_token parameter as per plugin v4 API", async () => {
       (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
-        text: jest
-          .fn()
-          .mockResolvedValueOnce(
-            JSON.stringify({
-              success: true,
-              data: { jwt: "new-jwt", refresh_token: "new-refresh" },
-            }),
-          ),
+        text: jest.fn().mockResolvedValueOnce(
+          JSON.stringify({
+            success: true,
+            data: { jwt: "new-jwt", refresh_token: "new-refresh" },
+          }),
+        ),
       });
 
       const result = await sdk.refreshToken({
@@ -854,6 +972,23 @@ describe("SimpleJwtLogin", () => {
         "http://example.com/?rest_route=/simple-jwt-login/v1/user/reset_password",
         expect.objectContaining({ method: "PUT" }),
       );
+    });
+
+    it("resetPassword resolves cleanly on plugin 4.2.0+ HTTP 200 anti-enumeration response", async () => {
+      const antiEnumResponse = {
+        success: true,
+        data: { message: "Reset password email has been sent." },
+      };
+      (globalThis.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: jest.fn().mockResolvedValueOnce(JSON.stringify(antiEnumResponse)),
+      });
+
+      const result = await sdk.resetPassword({
+        email: "unknown@example.com",
+      });
+      expect(result).toEqual(antiEnumResponse);
     });
   });
 
